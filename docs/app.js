@@ -634,7 +634,6 @@
       .map((id) => {
         return (
           '<button type="button" class="food-chip' +
-          (customIds.has(id) ? " added" : "") +
           (picked.has(id) ? " on" : "") +
           '" data-food-toggle="' +
           id +

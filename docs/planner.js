@@ -11,7 +11,7 @@
     oats: food("Rolled oats, dry", 389, 16.9, 6.9, 66.3, 10.6, 3.99, 510, "18 oz tub", "Trader Joe's"),
     banana: food("Banana", 89, 1.09, 0.33, 22.84, 2.6, 0.69, 453.6, "lb", "Trader Joe's"),
     berries: food("Frozen mixed berries", 45, 0.7, 0.4, 10, 4, 3.49, 454, "16 oz bag", "Trader Joe's"),
-    milk: food("1% milk", 42, 3.4, 1, 5, 0, 4.5, 3785, "gallon", "Trader Joe's"),
+    milk: food("Skim milk", 34, 3.4, 0.1, 5, 0, 4.5, 3785, "gallon", "Trader Joe's"),
     chicken: food("Chicken breast, raw", 120, 22.5, 2.62, 0, 0, 3.25, 453.6, "lb", "Costco"),
     rice: food("White rice, dry", 365, 7.13, 0.66, 80, 1.3, 1, 453.6, "lb", "Costco"),
     lentils: food("Dry lentils", 352, 24.6, 1.06, 63.4, 10.7, 1.99, 454, "1 lb bag", "Trader Joe's"),
@@ -63,10 +63,9 @@
     meal("breakfast", "breakfast", "Berry shake", "Blend it in the morning. Nothing is cooked.", [
       part("yogurt", "protein"),
       carb("oats", 80),
-      carb("banana", 120),
-      carb("berries", 80),
-      carb("milk", 200),
-      oil(),
+      carb("banana", 150),
+      carb("berries", 40),
+      carb("milk", 300),
     ]),
     meal("lunch-lentils", "lunch", "Chicken, rice, lentils", "Oven chicken, one pot of rice, one pot of lentils.", [
       part("chicken", "protein"),
@@ -167,16 +166,16 @@
   const DEFAULT_TARGETS = { kcal: 2500, p: 180, f: 65, c: 315 }
 
   /** Share of the day each slot is meant to cover. They sum to 1.
-      Breakfast and lunch: about 42 g protein and 110 g carbs.
-      About 45% of the snack's calories and protein sit on dinner instead. */
+      At 2,500 kcal the shake is 200 g yogurt, 80 g oats, 150 g banana, 40 g berries, 300 g skim milk.
+      Lunch stays near 40 g protein and 110 g carbs. Dinner carries more protein than the snack. */
   const DEFAULT_SHARES = {
-    breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
-    lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },
+    breakfast: { kcal: 683 / 2500, p: 46 / 180, f: 7 / 65, c: 114 / 315 },
+    lunch: { kcal: 790 / 2500, p: 42 / 180, f: 20 / 65, c: 112 / 315 },
     snack: { kcal: 235 / 2500, p: 26 / 180, f: 6 / 65, c: 17 / 315 },
-    dinner: { kcal: 815 / 2500, p: 70 / 180, f: 32 / 65, c: 76 / 315 },
+    dinner: { kcal: 792 / 2500, p: 66 / 180, f: 32 / 65, c: 72 / 315 },
   }
 
-  /* Same split as DEFAULT_SHARES. Kept so a saved plan on this split is left alone. */
+  /* Previous preset, before the shake moved to 300 g skim milk and a handful of berries. */
   const LIGHT_SNACK_SHARES = {
     breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
     lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },

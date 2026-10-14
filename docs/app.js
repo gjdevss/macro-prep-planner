@@ -745,7 +745,7 @@
       '<div class="targets">' +
       fields +
       "</div>" +
-      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Breakfast and lunch stay near 40 g of protein and 100 to 120 g of carbs. Dinner carries more of the protein than the snack. Typed sums: ' +
+      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Breakfast is about 45 g of protein. Lunch stays near 40 g. Both stay around 100 to 120 g of carbs. Dinner carries more of the protein than the snack. Typed sums: ' +
       sums +
       '.</p><table class="shares"><thead><tr><th></th><th>Kcal</th><th>Protein</th><th>Fat</th><th>Carbs</th></tr></thead><tbody>' +
       rows +

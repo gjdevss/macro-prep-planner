@@ -322,6 +322,7 @@
       (view === "plan" ? renderPlan(cache) : "") +
       (view === "month" ? renderMonth(cache) : "") +
       (view === "shop" ? renderShop(cache) : "") +
+      (view === "meals" ? renderMeals(cache) : "") +
       (view === "prep" ? renderPrep(cache) : "") +
       (view === "targets" ? renderTargets() : "") +
       (picker ? renderPicker(cache) : "") +
@@ -334,6 +335,7 @@
       ["plan", "Plan"],
       ["month", "Month"],
       ["shop", "Shop"],
+      ["meals", "Meals"],
       ["prep", "Prep"],
       ["targets", "Targets"],
     ]
@@ -602,6 +604,48 @@
 
   function monthBuy(cache) {
     return rangeBuy(cache, [0, 1, 2, 3])
+  }
+
+  function renderMeals(cache) {
+    const groups = P.SLOTS.map((slot) => {
+      const cards = P.mealsFor(slot)
+        .map((meal) => {
+          const scaled = cache[meal.id]
+          const items = scaled.items
+            .map((item) => {
+              const m = itemMacros(item)
+              return (
+                "<li><span class=\"food\">" +
+                esc(P.formatAmount(item)) +
+                " " +
+                esc(P.FOODS[item.food].name) +
+                "</span> <span class=\"muted\">(" +
+                macroLine(m) +
+                ")</span></li>"
+              )
+            })
+            .join("")
+          return (
+            '<article class="meal-card"><h4>' +
+            esc(meal.name) +
+            '</h4><p class="macros">' +
+            macroLine(scaled.actual) +
+            " · " +
+            P.money(scaled.cost) +
+            '</p><ul class="ingredients">' +
+            items +
+            "</ul></article>"
+          )
+        })
+        .join("")
+      return '<section class="meal-group"><h3>' + P.SLOT_LABEL[slot] + "</h3><div class=\"meal-grid\">" + cards + "</div></section>"
+    }).join("")
+    return (
+      '<section class="panel"><div class="panel-head"><div><h2>Meals</h2><p class="muted">Thirteen meals at the current targets. The grams move when the targets move. A yogurt-and-banana day adds 5 g of olive oil to lunch.</p></div></div>' +
+      '<div class="meal-groups">' +
+      groups +
+      "</div></section>"
+    )
   }
 
   function renderShop(cache) {

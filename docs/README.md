@@ -35,4 +35,6 @@ Default day: 2,500 kcal, 180 g protein, 65 g fat, 315 g carbs. Changing calories
 
 At 2,500 calories the shake is 200 g Greek yogurt, 80 g oats, 150 g banana, 40 g berries, and 300 g skim milk. Lunch stays near 40 g of protein. Both stay around 100 to 120 g of carbs. Dinner carries more of the protein than the snack.
 
+Meals, between Shop and Prep, lists all thirteen meals and the grams they land on at the current targets.
+
 The shop list is one list. A small menu next to each price notes the shop, starting with Costco and Trader Joe's, and you can add another. Switch the list between this week, two weeks, and the month. Prices are October 2026 shelf guesses. There is no live price connection.

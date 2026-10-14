@@ -29,7 +29,7 @@ body {
 }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
-h1, h2, h3, p { margin: 0; }
+h1, h2, h3, h4, p { margin: 0; }
 
 .app { max-width: 1120px; margin: 0 auto; padding: 1.25rem 1rem 2rem; }
 
@@ -246,6 +246,18 @@ h1, h2, h3, p { margin: 0; }
 .day-switch { display: none; }
 .meal-pick.on { border-color: var(--tomato); background: #fff7f4; }
 .meal-pick b { display: block; font-size: 1.02rem; }
+.meal-groups { display: flex; flex-direction: column; gap: 1.25rem; }
+.meal-group h3 { font-family: var(--serif); font-size: 1.45rem; font-weight: 560; margin-bottom: 0.55rem; }
+.meal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+.meal-grid:has(> :only-child) { grid-template-columns: 1fr; }
+.meal-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 0.95rem;
+}
+.meal-card h4 { font-size: 1.05rem; font-weight: 550; }
+.meal-card .macros { display: block; margin-top: 0.15rem; }
 .macros { color: var(--soft); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
 
 .month { display: flex; flex-direction: column; gap: 0.7rem; }
@@ -371,6 +383,8 @@ details summary { cursor: pointer; min-height: 44px; display: flex; align-items:
 @media (max-width: 760px) {
   .nav-top { display: none; }
   .nav-bottom { display: flex; }
+  .nav-bottom button { flex: 1 1 0; padding: 0.4rem 0.15rem; font-size: 0.78rem; }
+  .meal-grid { grid-template-columns: 1fr; }
   .top-side .ghost { display: none; }
   .app { padding-bottom: calc(var(--nav) + 1rem); }
   .brand h1 { font-size: 2rem; }

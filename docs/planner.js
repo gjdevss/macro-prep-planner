@@ -26,6 +26,7 @@
     passata: food("Tomato passata", 32, 1.4, 0.2, 6, 1.2, 2, 500, "jar", "Trader Joe's"),
     spinach: food("Spinach", 23, 2.9, 0.4, 3.6, 2.2, 2.49, 284, "bag", "Trader Joe's"),
     cottage: food("2% cottage cheese", 84, 11.1, 2.3, 4.3, 0, 3.49, 454, "16 oz tub", "Trader Joe's"),
+    walnuts: food("Walnuts", 643, 14.3, 64.3, 14.3, 7.1, 7.99, 454, "16 oz bag", "Trader Joe's"),
     apple: food("Apple", 52, 0.26, 0.17, 13.8, 2.4, 1.5, 453.6, "lb", "Trader Joe's"),
     sardines: food("Sardines in water, drained", 185, 24.6, 10.5, 0, 0, 2, 120, "can", "Trader Joe's"),
     egg: {
@@ -126,9 +127,10 @@
       part("cottage", "protein"),
       carb("berries", 150),
     ]),
-    meal("snack-banana", "snack", "Yogurt and banana", "No cooking.", [
+    meal("snack-banana", "snack", "Yogurt, banana, and walnuts", "No cooking.", [
       part("yogurt", "protein"),
       carb("banana", 120),
+      fixed("walnuts", 10),
     ]),
     meal("snack-fruit", "snack", "Cottage cheese, apple, berries", "No cooking.", [
       part("cottage", "protein"),
@@ -400,8 +402,7 @@
       const solved = fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil)
       const looseProtein = fixedParts.some((p) => p.food === "sardines")
       const refined = refine(solved, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein)
-      let built = materialize(meal, refined, proteinParts, carbParts)
-      if (meal.slot === "snack") built = built.filter((item) => item.food !== "oil")
+      const built = materialize(meal, refined, proteinParts, carbParts)
       const actual = macrosOf(built)
       const err = errorScore(actual, target, looseProtein)
       if (!best || err < best.err) best = { items: built, actual, err, meal }
@@ -627,28 +628,8 @@
     return cache
   }
 
-  function withExtraOil(scaled, grams, prices) {
-    const items = scaled.items.map((item) => ({ food: item.food, amount: item.amount }))
-    const found = items.find((item) => item.food === "oil")
-    if (found) found.amount += grams
-    else items.push({ food: "oil", amount: grams })
-    return { meal: scaled.meal, items, actual: macrosOf(items), cost: costOf(items, prices), target: scaled.target }
-  }
-
-  /* Yogurt is nonfat, so the snack solver used to pour olive oil on it to hit the fat target.
-     That oil moves onto lunch on the days that snack is yogurt. Cottage cheese already has its own fat. */
-  function withoutOil(scaled, prices) {
-    if (!scaled.items.some((item) => item.food === "oil")) return scaled
-    const items = scaled.items.filter((item) => item.food !== "oil")
-    return { meal: scaled.meal, items, actual: macrosOf(items), cost: costOf(items, prices), target: scaled.target }
-  }
-
   function mealOnDay(state, cache, day, slot) {
-    const scaled = cache[day[slot]]
-    if (!scaled) return scaled
-    if (slot === "snack") return withoutOil(scaled, state.prices)
-    if (slot === "lunch" && day.snack === "snack-banana") return withExtraOil(scaled, 5, state.prices)
-    return scaled
+    return cache[day[slot]]
   }
 
   function dayMeals(state, cache, day) {

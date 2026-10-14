@@ -78,7 +78,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .ghost:hover, .week-btn:hover, .day-chip:hover { border-color: #c9bba6; }
 .solid:hover { background: #2a241e; }
 
-.nav-top { display: flex; gap: 0.35rem; margin: 1rem 0; }
+.nav-top { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 1rem 0; }
 .nav-top button, .nav-bottom button {
   background: transparent;
   border: 0;

@@ -60,6 +60,22 @@
     FOODS[id].id = id
   })
 
+  let liveFoods = FOODS
+
+  function foodById(id) {
+    return liveFoods[id]
+  }
+
+  function bindFoods(list) {
+    const merged = Object.assign({}, FOODS)
+    ;(Array.isArray(list) ? list : []).forEach((item) => {
+      if (!item || !item.id || FOODS[item.id] || !item.per100) return
+      merged[item.id] = item
+    })
+    liveFoods = merged
+    return merged
+  }
+
   const MEALS = [
     meal("breakfast", "breakfast", "Berry shake", "Blend it in the morning. Nothing is cooked.", [
       part("yogurt", "protein"),
@@ -260,7 +276,7 @@
     const total = parts.reduce((s, p) => s + p.share, 0) || 1
     const out = { kcal: 0, p: 0, f: 0, c: 0 }
     parts.forEach((p) => {
-      const u = perUnit(FOODS[p.food])
+      const u = perUnit(foodById(p.food))
       const w = p.share / total
       KEYS.forEach((k) => {
         out[k] += u[k] * w
@@ -363,7 +379,7 @@
 
   function macrosOf(items) {
     const m = zero()
-    items.forEach((item) => add(m, vector(FOODS[item.food], item.amount)))
+    items.forEach((item) => add(m, vector(foodById(item.food), item.amount)))
     return m
   }
 
@@ -377,7 +393,8 @@
   }
 
   function lineCost(item, prices) {
-    const food = FOODS[item.food]
+    const food = foodById(item.food)
+    if (!food) return 0
     if (food.piece) return (pricePer100(food, prices) / 100) * item.amount
     return (pricePer100(food, prices) / 100) * item.amount
   }
@@ -391,7 +408,9 @@
       return { step: one, min: one, max: one * 3 }
     }
     if (food.id === "oil") return { step: 5, min: 5, max: 80 }
-    return { step: 10, min: 10, max: 1200 }
+    /* 10 g is a smear. Dense foods, like nuts, stay a small handful. Everything else stays a real portion. */
+    if (food.per100 && food.per100.kcal >= 500) return { step: 5, min: 15, max: 120 }
+    return { step: 10, min: 40, max: 1200 }
   }
 
   /* Eggs stop at six and sardines are one can, so the solver was filling the
@@ -413,7 +432,7 @@
   /* A meal you add is a list of foods. Each food stays in the meal.
      Grams are the best fit to that section's target. Nothing is typed in. */
   function scaleListed(meal, target, prices) {
-    const foods = meal.foods.map((id) => FOODS[id]).filter(Boolean)
+    const foods = meal.foods.map((id) => foodById(id)).filter(Boolean)
     const guess = nnls(foods.map(perUnit), target)
     let amounts = foods.map((food, i) => {
       const bound = listedBounds(food)
@@ -497,9 +516,9 @@
 
   function fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil) {
     const base = zero()
-    fixedParts.forEach((p) => add(base, vector(FOODS[p.food], p.grams)))
-    Object.entries(counts).forEach(([id, n]) => add(base, vector(FOODS[id], n)))
-    Object.entries(micros).forEach(([id, g]) => add(base, vector(FOODS[id], g)))
+    fixedParts.forEach((p) => add(base, vector(foodById(p.food), p.grams)))
+    Object.entries(counts).forEach(([id, n]) => add(base, vector(foodById(id), n)))
+    Object.entries(micros).forEach(([id, g]) => add(base, vector(foodById(id), g)))
     const remain = sub(target, base)
     const cols = []
     const names = []
@@ -512,7 +531,7 @@
       names.push("carb")
     }
     if (hasOil) {
-      cols.push(perUnit(FOODS.oil))
+      cols.push(perUnit(foodById("oil")))
       names.push("oil")
     }
     const x = nnls(cols, remain)
@@ -696,6 +715,7 @@
       shops: {},
       shopList: [],
       customMeals: [],
+      customFoods: [],
       hiddenMeals: [],
       mealEdits: {},
     }
@@ -757,6 +777,7 @@
   }
 
   function scalePlan(state) {
+    bindFoods(state.customFoods)
     const shares = normalizeShares(state.shares)
     const cache = {}
     SLOTS.forEach((slot) => {
@@ -801,12 +822,14 @@
   }
 
   function shopping(state, cache, weekIndexes) {
+    bindFoods(state.customFoods)
     const totals = collect(state, cache, weekIndexes)
     const shops = state.shops || {}
     return Object.entries(totals)
       .filter(([, amount]) => amount > 0)
       .map(([id, amount]) => {
-        const food = FOODS[id]
+        const food = foodById(id)
+        if (!food) return null
         const packs = Math.ceil(amount / food.packGrams - 1e-9)
         const picked = shops[id] && String(shops[id]).trim() ? String(shops[id]).trim() : food.store
         return {
@@ -821,6 +844,7 @@
           cost: (pricePer100(food, state.prices) / 100) * amount,
         }
       })
+      .filter(Boolean)
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
@@ -838,7 +862,7 @@
   function cleanShops(shops) {
     const next = {}
     if (!shops || typeof shops !== "object") return next
-    Object.keys(FOODS).forEach((id) => {
+    Object.keys(liveFoods).forEach((id) => {
       const name = cleanShopName(shops[id])
       if (name) next[id] = name
     })
@@ -869,6 +893,7 @@
   }
 
   function prep(state, cache, weekIndex) {
+    bindFoods(state.customFoods)
     const totals = collect(state, cache, [weekIndex])
     const days = state.weeks[weekIndex].map((day, i) => ({
       name: DAYS[i],
@@ -932,6 +957,13 @@
         body: "Cover with water, boil, then 9 more minutes. Cool them in the fridge. Peel the day you eat them.",
       })
     }
+    const added = Object.keys(totals).filter((id) => totals[id] > 0 && !FOODS[id] && foodById(id))
+    if (added.length) {
+      steps.push({
+        title: "Foods you added",
+        body: added.map((id) => formatLine({ food: id, amount: Math.round(totals[id]) })).join(". ") + ". Weigh them into the boxes.",
+      })
+    }
     steps.push({
       title: "Boxes",
       body: "Vegetables can go in frozen. Sardines stay in the can until the morning you eat them. Shake and cottage cheese are not cooked. Cool the hot food within two hours. Keep three days in the fridge and freeze the rest. Thaw tomorrow's boxes in the fridge overnight. Reheat covered, with a spoon of water, for 2 or 3 minutes.",
@@ -955,7 +987,8 @@
   }
 
   function formatLine(item) {
-    const food = FOODS[item.food]
+    const food = foodById(item.food)
+    if (!food) return item.amount + " g"
     if (food.piece) {
       const n = item.amount
       const word = food.name.toLowerCase()
@@ -965,7 +998,8 @@
   }
 
   function formatAmount(item) {
-    const food = FOODS[item.food]
+    const food = foodById(item.food)
+    if (!food) return item.amount + " g"
     if (food.piece) {
       const n = item.amount
       return n + (n === 1 ? " egg" : " eggs")
@@ -992,7 +1026,7 @@
       const foods = []
       const foodSeen = new Set()
       ;(Array.isArray(meal.foods) ? meal.foods : []).forEach((foodId) => {
-        if (!FOODS[foodId] || foodSeen.has(foodId)) return
+        if (!foodById(foodId) || foodSeen.has(foodId)) return
         foodSeen.add(foodId)
         foods.push(foodId)
       })
@@ -1020,7 +1054,7 @@
     const foods = []
     const seen = new Set()
     ;(Array.isArray(list) ? list : []).forEach((foodId) => {
-      if (!FOODS[foodId] || seen.has(foodId)) return
+      if (!foodById(foodId) || seen.has(foodId)) return
       seen.add(foodId)
       foods.push(foodId)
     })
@@ -1042,17 +1076,71 @@
     return next
   }
 
+  function round2(n) {
+    return Math.round(n * 100) / 100
+  }
+
+  function cleanCustomFoods(list) {
+    const foods = []
+    const seen = new Set()
+    const names = new Set(Object.keys(FOODS).map((id) => FOODS[id].name.toLowerCase()))
+    if (!Array.isArray(list)) return foods
+    list.forEach((item) => {
+      if (!item || typeof item !== "object") return
+      const id = String(item.id || "").trim().slice(0, 24)
+      if (!/^f[a-z0-9]+$/.test(id) || FOODS[id] || seen.has(id)) return
+      const name = String(item.name || "").trim().slice(0, 60)
+      if (!name || names.has(name.toLowerCase())) return
+      const src = item.per100 || {}
+      const per100 = {
+        kcal: round2(Math.max(0, Number(src.kcal) || 0)),
+        p: round2(Math.max(0, Number(src.p) || 0)),
+        f: round2(Math.max(0, Number(src.f) || 0)),
+        c: round2(Math.max(0, Number(src.c) || 0)),
+        fiber: round2(Math.max(0, Number(src.fiber) || 0)),
+      }
+      if (per100.kcal + per100.p + per100.f + per100.c <= 0) return
+      const packGrams = Number(item.packGrams)
+      if (!Number.isFinite(packGrams) || packGrams <= 0 || packGrams > 50000) return
+      const packPrice = Number(item.packPrice)
+      const packLabel = String(item.packLabel || "pack").trim().slice(0, 24) || "pack"
+      const store = cleanShopName(item.store) || "Trader Joe's"
+      seen.add(id)
+      names.add(name.toLowerCase())
+      foods.push({
+        id,
+        name,
+        per100,
+        packPrice: Number.isFinite(packPrice) && packPrice >= 0 ? round2(packPrice) : 0,
+        packGrams: round2(packGrams),
+        packLabel,
+        store,
+        piece: false,
+      })
+    })
+    return foods.slice(0, 40)
+  }
+
   function sanitize(state) {
     const base = defaultState()
+    const customFoods = cleanCustomFoods(state.customFoods)
+    bindFoods(customFoods)
+    const prices = {}
+    const rawPrices = state.prices && typeof state.prices === "object" ? state.prices : {}
+    Object.keys(liveFoods).forEach((id) => {
+      const n = Number(rawPrices[id])
+      if (Number.isFinite(n) && n >= 0) prices[id] = n
+    })
     const next = {
       targets: { ...base.targets, ...(state.targets || {}) },
       shares: presetShares(state.shares) ? base.shares : state.shares,
       weeks: Array.isArray(state.weeks) ? state.weeks : base.weeks,
       activeWeek: Number.isInteger(state.activeWeek) ? state.activeWeek : 0,
-      prices: state.prices && typeof state.prices === "object" ? state.prices : {},
+      prices,
       shops: cleanShops(state.shops),
       shopList: cleanShopList(state.shopList),
       customMeals: cleanCustomMeals(state.customMeals),
+      customFoods,
       hiddenMeals: cleanHiddenMeals(state.hiddenMeals),
       mealEdits: cleanMealEdits(state.mealEdits),
     }
@@ -1106,6 +1194,7 @@
 
   return {
     FOODS,
+    foods: bindFoods,
     MEALS,
     SLOTS,
     SLOT_LABEL,

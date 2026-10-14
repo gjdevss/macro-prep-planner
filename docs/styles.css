@@ -288,6 +288,13 @@ h1, h2, h3, h4, p { margin: 0; }
   padding: 0.35rem 0.8rem;
 }
 .food-chip.on { border-color: var(--tomato); background: #fff7f4; }
+.add-food { margin-top: 0.55rem; }
+.your-foods { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin: 0.35rem 0 0.7rem; color: var(--soft); font-size: 0.92rem; }
+.your-food { display: inline-flex; align-items: center; gap: 0.3rem; }
+.your-food .ghost { min-height: 36px; padding: 0.15rem 0.6rem; }
+.new-food { margin-top: 0.85rem; }
+.new-food h4 { font-size: 1.02rem; font-weight: 550; margin-bottom: 0.35rem; }
+.macro-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.45rem; margin: 0.35rem 0 0.7rem; }
 .food-chip[hidden] { display: none; }
 .meal-card .macros { display: block; margin-top: 0.15rem; }
 .macros { color: var(--soft); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
@@ -417,6 +424,7 @@ details summary { cursor: pointer; min-height: 44px; display: flex; align-items:
   .nav-bottom { display: flex; }
   .nav-bottom button { flex: 1 1 0; padding: 0.4rem 0.15rem; font-size: 0.78rem; }
   .meal-grid { grid-template-columns: 1fr; }
+  .macro-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .top-side .ghost { display: none; }
   .app { padding-bottom: calc(var(--nav) + 1rem); }
   .brand h1 { font-size: 2rem; }

@@ -20,6 +20,7 @@
   let shopScope = "month"
   let picker = null
   let mealDraft = null
+  let foodDraft = null
   let notice = ""
   let cacheKey = ""
   let scaledCache = null
@@ -256,6 +257,7 @@
       m: state.customMeals,
       h: state.hiddenMeals,
       e: state.mealEdits,
+      f: state.customFoods,
     })
     if (key !== cacheKey) {
       cacheKey = key
@@ -264,8 +266,12 @@
     return scaledCache
   }
 
+  function catalog() {
+    return P.foods(state.customFoods)
+  }
+
   function itemMacros(item) {
-    const food = P.FOODS[item.food]
+    const food = catalog()[item.food]
     if (food.piece) {
       return {
         kcal: food.each.kcal * item.amount,
@@ -616,9 +622,10 @@
     if (!mealDraft || mealDraft.slot !== slot) {
       return '<button type="button" class="ghost add-meal" data-add-meal="' + slot + '">Add a ' + P.SLOT_LABEL[slot].toLowerCase() + "</button>"
     }
+    const foods = catalog()
     const picked = new Set(mealDraft.foods)
-    const chips = Object.keys(P.FOODS)
-      .sort((a, b) => P.FOODS[a].name.localeCompare(P.FOODS[b].name))
+    const chips = Object.keys(foods)
+      .sort((a, b) => foods[a].name.localeCompare(foods[b].name))
       .map((id) => {
         return (
           '<button type="button" class="food-chip' +
@@ -626,10 +633,20 @@
           '" data-food-toggle="' +
           id +
           '">' +
-          esc(P.FOODS[id].name) +
+          esc(foods[id].name) +
           "</button>"
         )
       })
+      .join("")
+    const yours = (state.customFoods || [])
+      .map(
+        (food) =>
+          '<span class="your-food">' +
+          esc(food.name) +
+          ' <button type="button" class="ghost" data-remove-food="' +
+          esc(food.id) +
+          '">Remove</button></span>',
+      )
       .join("")
     return (
       '<div class="meal-draft"><label>Name<input data-meal-name value="' +
@@ -638,15 +655,141 @@
       chips +
       '</div><p class="hint">Pick the foods. Grams are calculated for ' +
       P.SLOT_LABEL[slot].toLowerCase() +
-      '. Up to 8 foods.</p><div class="action-row"><button type="button" class="solid" data-save-meal="1">' +
+      '. Up to 8 foods.</p>' +
+      (yours ? '<div class="your-foods">Foods you added ' + yours + "</div>" : "") +
+      foodForm() +
+      '<div class="action-row"><button type="button" class="solid" data-save-meal="1">' +
       (mealDraft.id ? "Save meal" : "Add meal") +
       '</button><button type="button" class="ghost" data-cancel-meal="1">Cancel</button></div></div>'
     )
   }
 
+  function field(key, label, value, placeholder, mode) {
+    return (
+      "<label>" +
+      label +
+      '<input data-new-' +
+      key +
+      ' value="' +
+      esc(value || "") +
+      '" placeholder="' +
+      esc(placeholder || "") +
+      '" maxlength="40" autocomplete="off" inputmode="' +
+      (mode || "decimal") +
+      '"></label>'
+    )
+  }
+
+  function foodForm() {
+    if (!foodDraft) {
+      return '<button type="button" class="ghost add-food" data-new-food="1">Add a new food</button>'
+    }
+    const d = foodDraft
+    return (
+      '<div class="new-food"><h4>New food</h4><label>Name<input data-new-name value="' +
+      esc(d.name || "") +
+      '" placeholder="Sourdough" maxlength="60" autocomplete="off"></label><p class="hint">Per 100 g, from the label.</p><div class="macro-fields">' +
+      field("kcal", "Calories", d.kcal, "250") +
+      field("p", "Protein, g", d.p, "9") +
+      field("f", "Fat, g", d.f, "1.5") +
+      field("c", "Carbs, g", d.c, "49") +
+      '</div><p class="hint">The pack is what the shop list buys. Once a meal on the plan uses this food, it shows up there.</p><div class="macro-fields">' +
+      field("price", "Pack price, $", d.price, "3.49") +
+      field("grams", "Pack size, g", d.grams, "680") +
+      field("label", "Pack", d.label, "loaf", "text") +
+      field("store", "Shop", d.store, "Trader Joe's", "text") +
+      '</div><div class="action-row"><button type="button" class="solid" data-save-food="1">Add food</button><button type="button" class="ghost" data-cancel-food="1">Cancel</button></div></div>'
+    )
+  }
+
+  function readFoodDraft() {
+    if (!foodDraft) return
+    ;["name", "kcal", "p", "f", "c", "price", "grams", "label", "store"].forEach((key) => {
+      const el = document.querySelector("[data-new-" + key + "]")
+      if (el) foodDraft[key] = el.value
+    })
+  }
+
   function readDraftName() {
     const input = document.querySelector("[data-meal-name]")
     if (input && mealDraft) mealDraft.name = input.value
+  }
+
+  function rememberShop(name) {
+    const trimmed = String(name || "").trim().slice(0, 40)
+    if (!trimmed) return "Trader Joe's"
+    const existing = shopChoices().find((choice) => choice.toLowerCase() === trimmed.toLowerCase())
+    if (existing) return existing
+    state.shopList = (state.shopList || []).concat(trimmed).slice(0, 12)
+    return trimmed
+  }
+
+  function saveCustomFood() {
+    if (!foodDraft) return
+    readFoodDraft()
+    const name = String(foodDraft.name || "").trim().slice(0, 60)
+    if (!name) {
+      flash("Name the food.")
+      return
+    }
+    const known = catalog()
+    if (Object.keys(known).some((id) => known[id].name.toLowerCase() === name.toLowerCase())) {
+      flash("That food is already in the list.")
+      return
+    }
+    const typed = [foodDraft.kcal, foodDraft.p, foodDraft.f, foodDraft.c]
+    if (typed.some((value) => String(value || "").trim() !== "" && !Number.isFinite(Number(value)))) {
+      flash("Use numbers for the label.")
+      return
+    }
+    const per100 = {
+      kcal: Number(foodDraft.kcal) || 0,
+      p: Number(foodDraft.p) || 0,
+      f: Number(foodDraft.f) || 0,
+      c: Number(foodDraft.c) || 0,
+      fiber: 0,
+    }
+    if (per100.kcal + per100.p + per100.f + per100.c <= 0) {
+      flash("Enter the calories, protein, fat, and carbs per 100 g.")
+      return
+    }
+    const packGrams = Number(foodDraft.grams)
+    if (!Number.isFinite(packGrams) || packGrams <= 0) {
+      flash("Enter the pack size in grams.")
+      return
+    }
+    const packPrice = String(foodDraft.price || "").trim() === "" ? 0 : Number(foodDraft.price)
+    if (!Number.isFinite(packPrice) || packPrice < 0) {
+      flash("Enter the pack price.")
+      return
+    }
+    const packLabel = String(foodDraft.label || "").trim().slice(0, 24) || "pack"
+    const store = rememberShop(String(foodDraft.store || "").trim() || "Trader Joe's")
+    const taken = new Set(Object.keys(P.FOODS).concat((state.customFoods || []).map((food) => food.id)))
+    let id = "f" + Math.random().toString(36).slice(2, 10)
+    while (taken.has(id)) id = "f" + Math.random().toString(36).slice(2, 10)
+    state.customFoods = (state.customFoods || []).concat([{ id, name, per100, packPrice, packGrams, packLabel, store, piece: false }])
+    if (mealDraft && mealDraft.foods.indexOf(id) < 0 && mealDraft.foods.length < 8) mealDraft.foods = mealDraft.foods.concat(id)
+    foodDraft = null
+    commit()
+  }
+
+  function removeCustomFood(id) {
+    state.customFoods = (state.customFoods || []).filter((food) => food.id !== id)
+    state.customMeals = (state.customMeals || [])
+      .map((meal) => Object.assign({}, meal, { foods: meal.foods.filter((foodId) => foodId !== id) }))
+      .filter((meal) => meal.foods.length)
+    const edits = {}
+    Object.keys(state.mealEdits || {}).forEach((mealId) => {
+      const edit = state.mealEdits[mealId]
+      const foods = (edit.foods || []).filter((foodId) => foodId !== id)
+      if (foods.length) edits[mealId] = { name: edit.name, foods }
+    })
+    state.mealEdits = edits
+    if (state.prices) delete state.prices[id]
+    if (state.shops) delete state.shops[id]
+    if (mealDraft) mealDraft.foods = mealDraft.foods.filter((foodId) => foodId !== id)
+    commit()
   }
 
   function saveDraftMeal() {
@@ -658,7 +801,7 @@
       return
     }
     let name = mealDraft.name.trim()
-    if (!name) name = foods.map((id) => P.FOODS[id].name).join(", ")
+    if (!name) name = foods.map((id) => catalog()[id].name).join(", ")
     name = name.slice(0, 60)
     if (mealDraft.id) {
       const builtin = P.MEALS.find((meal) => meal.id === mealDraft.id)
@@ -757,7 +900,7 @@
     const total = lines.reduce((sum, line) => sum + buyCost(line), 0)
     const rows = lines
       .map((line) => {
-        const food = P.FOODS[line.id]
+        const food = catalog()[line.id]
         const store = line.store
         return (
           '<div class="line"><div><strong>' +
@@ -778,6 +921,7 @@
           esc(line.name) +
           '">' +
           shopChoices()
+            .concat(store && !shopChoices().some((name) => name.toLowerCase() === store.toLowerCase()) ? [store] : [])
             .map((name) => '<option' + (name === store ? " selected" : "") + ">" + esc(name) + "</option>")
             .join("") +
           '<option value="__add__">Add shop…</option></select></div><div class="money">' +
@@ -905,11 +1049,16 @@
   }
 
   app.addEventListener("click", (event) => {
+    if (mealDraft) readDraftName()
+    if (foodDraft) readFoodDraft()
     const viewBtn = event.target.closest("[data-view]")
     if (viewBtn) {
       view = viewBtn.dataset.view
       picker = null
-      if (view !== "meals") mealDraft = null
+      if (view !== "meals") {
+        mealDraft = null
+        foodDraft = null
+      }
       render()
       return
     }
@@ -963,7 +1112,31 @@
     }
     if (event.target.closest("[data-cancel-meal]")) {
       mealDraft = null
+      foodDraft = null
       render()
+      return
+    }
+    if (event.target.closest("[data-new-food]")) {
+      foodDraft = { name: "", kcal: "", p: "", f: "", c: "", price: "", grams: "", label: "", store: "" }
+      render()
+      const input = document.querySelector("[data-new-name]")
+      if (input) input.focus()
+      return
+    }
+    if (event.target.closest("[data-cancel-food]")) {
+      foodDraft = null
+      render()
+      return
+    }
+    if (event.target.closest("[data-save-food]")) {
+      saveCustomFood()
+      return
+    }
+    const removeFood = event.target.closest("[data-remove-food]")
+    if (removeFood) {
+      const id = removeFood.dataset.removeFood
+      const food = catalog()[id]
+      if (food && window.confirm("Remove " + food.name + "?")) removeCustomFood(id)
       return
     }
     const removeMeal = event.target.closest("[data-remove-meal]")
@@ -1046,7 +1219,7 @@
       return
     }
     if (event.target.closest("[data-reset]")) {
-      if (window.confirm("Reset meals, targets, prices, and shop marks?")) {
+        if (window.confirm("Reset meals, foods you added, targets, prices, and shop marks?")) {
         state = P.defaultState()
         commit()
       }
@@ -1106,7 +1279,8 @@
     }
     const price = event.target.closest("[data-price]")
     if (price) {
-      const food = P.FOODS[price.dataset.price]
+      const food = catalog()[price.dataset.price]
+      if (!food) return
       const n = Number(price.value)
       if (price.value.trim() === "") delete state.prices[food.id]
       else if (Number.isFinite(n) && n >= 0) state.prices[food.id] = (n / food.packGrams) * 100
@@ -1116,7 +1290,7 @@
     const shop = event.target.closest("[data-shop-for]")
     if (shop) {
       const id = shop.dataset.shopFor
-      const food = P.FOODS[id]
+      const food = catalog()[id]
       if (!food) return
       if (shop.value === "__add__") {
         const typed = window.prompt("Shop name")

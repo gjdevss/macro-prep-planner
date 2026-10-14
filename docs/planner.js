@@ -401,23 +401,101 @@
 
   const WHOLE_FRUIT = { banana: 120, apple: 180 }
 
-  function listedBounds(food) {
-    if (food.piece) return { step: 1, min: 1, max: food.id === "egg" ? 6 : 8 }
-    if (WHOLE_FRUIT[food.id]) {
-      const one = WHOLE_FRUIT[food.id]
-      return { step: one, min: one, max: one * 3 }
-    }
-    if (food.id === "oil") return { step: 5, min: 5, max: 80 }
-    /* 10 g is a smear. Dense foods, like nuts, stay a small handful. Everything else stays a real portion. */
-    if (food.per100 && food.per100.kcal >= 500) return { step: 5, min: 15, max: 120 }
-    return { step: 10, min: 40, max: 1200 }
+  /* A plate stays cookable. Meat is a serving, a potato is a potato, vegetables
+     are a side, and oil or nuts are a spoon or a handful. The berry shake is
+     the one recipe that does not use these limits. */
+  const PORTION_BANDS = {
+    chicken: { step: 10, min: 80, max: 400 },
+    beef: { step: 10, min: 80, max: 400 },
+    potato: { step: 10, min: 200, max: 450 },
+    sweetpotato: { step: 10, min: 200, max: 500 },
+    rice: { step: 10, min: 40, max: 180 },
+    lentils: { step: 10, min: 40, max: 120 },
+    pasta: { step: 10, min: 60, max: 200 },
+    blackbeans: { step: 10, min: 40, max: 240 },
+    oats: { step: 10, min: 40, max: 100 },
+    broccoli: { step: 10, min: 80, max: 220 },
+    spinach: { step: 10, min: 40, max: 160 },
+    mixedveg: { step: 10, min: 80, max: 170 },
+    passata: { step: 10, min: 80, max: 250 },
+    berries: { step: 10, min: 40, max: 150 },
+    yogurt: { step: 10, min: 150, max: 400 },
+    cottage: { step: 10, min: 120, max: 400 },
+    milk: { step: 10, min: 150, max: 500 },
+    oil: { step: 5, min: 5, max: 40 },
+    walnuts: { step: 5, min: 10, max: 30 },
+    sardines: { step: 120, min: 120, max: 120 },
   }
 
-  /* Eggs stop at six and sardines are one can, so the solver was filling the
-     plate with vegetables and dropping the potato. Keep a real potato and a side. */
-  function plateBounds(meal) {
-    if (meal.id === "dinner-eggs" || meal.id === "dinner-sardines") return { carbMin: 300, microMax: { mixedveg: 150 } }
-    return null
+  function inferredBand(food) {
+    const per = food.per100 || { kcal: 0, p: 0, f: 0, c: 0 }
+    if (per.kcal >= 500) return { step: 5, min: 10, max: 40 }
+    if (per.p >= 15 && per.p * 4 >= per.kcal * 0.35) return { step: 10, min: 80, max: 400 }
+    if (per.kcal <= 50) return { step: 10, min: 80, max: 200 }
+    if (per.kcal <= 120 && per.c >= 8) return { step: 10, min: 150, max: 450 }
+    if (per.kcal >= 280 && per.c >= 40) return { step: 10, min: 40, max: 180 }
+    if (per.p >= 8 && per.kcal < 160) return { step: 10, min: 120, max: 400 }
+    return { step: 10, min: 40, max: 250 }
+  }
+
+  function portionBand(food) {
+    if (!food) return { step: 10, min: 40, max: 250 }
+    if (food.piece) return { step: 1, min: 1, max: food.id === "egg" ? 6 : 8 }
+    if (PORTION_BANDS[food.id]) return PORTION_BANDS[food.id]
+    if (WHOLE_FRUIT[food.id]) {
+      const one = WHOLE_FRUIT[food.id]
+      return { step: one, min: one, max: one * 2 }
+    }
+    return inferredBand(food)
+  }
+
+  function listedBounds(food) {
+    return portionBand(food)
+  }
+
+  function shakeRecipe(meal) {
+    return meal && meal.id === "breakfast" && !Array.isArray(meal.foods)
+  }
+
+  function portionBounds(meal) {
+    if (!meal || shakeRecipe(meal)) return null
+    return { smart: true }
+  }
+
+  function amountLegal(id, grams) {
+    if (id === "oil" && grams === 0) return true
+    const band = portionBand(foodById(id))
+    return grams + 1e-6 >= band.min && grams - 1e-6 <= band.max
+  }
+
+  function snapPortion(id, grams) {
+    if (id === "oil" && grams < 5) return 0
+    const band = portionBand(foodById(id))
+    const stepped = roundStep(grams, band.step)
+    return Math.min(band.max, Math.max(band.min, stepped))
+  }
+
+  function groupLegal(parts, total, step) {
+    if (!parts.length) return true
+    const split = splitGroup(parts, total, step)
+    return parts.every((part) => amountLegal(part.food, split[part.food]))
+  }
+
+  function nearestLegal(parts, total, step) {
+    if (!parts.length) return total
+    const start = Math.max(0, roundStep(total, step))
+    if (groupLegal(parts, start, step)) return start
+    let best = null
+    let bestDist = Infinity
+    for (let grams = 0; grams <= 4000; grams += step) {
+      if (!groupLegal(parts, grams, step)) continue
+      const dist = Math.abs(grams - start)
+      if (dist < bestDist) {
+        best = grams
+        bestDist = dist
+      }
+    }
+    return best == null ? start : best
   }
 
   function listedScore(foods, amounts, target) {
@@ -493,8 +571,13 @@
       microParts.forEach((p) => {
         micros[p.food] = p.grams
       })
-      const bounds = plateBounds(meal)
-      const solved = clampPlate(fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil), bounds)
+      const bounds = portionBounds(meal)
+      const solved = clampPlate(
+        fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil),
+        bounds,
+        proteinParts,
+        carbParts,
+      )
       const looseProtein = fixedParts.some((p) => p.food === "sardines")
       const refined = refine(solved, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein, bounds, looseEnergy)
       const built = materialize(meal, refined, proteinParts, carbParts)
@@ -558,12 +641,14 @@
     return s
   }
 
-  function clampPlate(state, bounds) {
-    if (!bounds) return state
-    if (bounds.carbMin && state.carb < bounds.carbMin) state.carb = bounds.carbMin
-    Object.keys(bounds.microMax || {}).forEach((id) => {
-      if (state.micros[id] != null && state.micros[id] > bounds.microMax[id]) state.micros[id] = bounds.microMax[id]
+  function clampPlate(state, bounds, proteinParts, carbParts) {
+    if (!bounds || !bounds.smart) return state
+    state.protein = nearestLegal(proteinParts || [], state.protein, 10)
+    state.carb = nearestLegal(carbParts || [], state.carb, 10)
+    Object.keys(state.micros).forEach((id) => {
+      state.micros[id] = snapPortion(id, state.micros[id])
     })
+    if (state.oil > 40) state.oil = 40
     return state
   }
 
@@ -585,7 +670,7 @@
         moves.push({ count: current.counts[countPart.food] + 1 })
       }
       moves.forEach((move) => {
-        const next = applyMove(current, move, countPart, bounds)
+        const next = applyMove(current, move, countPart, bounds, proteinParts, carbParts)
         if (!next) return
         const s = scoreState(next, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein, looseEnergy)
         if (s < bestScore - 1e-9) {
@@ -609,25 +694,29 @@
     }
   }
 
-  function applyMove(state, move, countPart, bounds) {
+  function applyMove(state, move, countPart, bounds, proteinParts, carbParts) {
     const next = cloneState(state)
+    const smart = bounds && bounds.smart
     if (move.protein != null) {
       if (move.protein < 0) return null
+      if (smart && !groupLegal(proteinParts || [], move.protein, 10)) return null
       next.protein = move.protein
     }
     if (move.carb != null) {
-      const carbMin = (bounds && bounds.carbMin) || 0
-      if (move.carb < carbMin) return null
+      if (smart) {
+        if (!groupLegal(carbParts || [], move.carb, 10)) return null
+      } else if (move.carb < 0) return null
       next.carb = move.carb
     }
     if (move.oil != null) {
       if (move.oil < 0) return null
+      if (smart && move.oil > 40) return null
       next.oil = move.oil
     }
     if (move.micro) {
-      if (move.grams < 40) return null
-      const cap = bounds && bounds.microMax && bounds.microMax[move.micro]
-      if (cap != null && move.grams > cap) return null
+      if (smart) {
+        if (!amountLegal(move.micro, move.grams)) return null
+      } else if (move.grams < 40) return null
       next.micros[move.micro] = move.grams
     }
     if (move.count != null) {

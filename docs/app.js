@@ -641,7 +641,7 @@
       return '<section class="meal-group"><h3>' + P.SLOT_LABEL[slot] + "</h3><div class=\"meal-grid\">" + cards + "</div></section>"
     }).join("")
     return (
-      '<section class="panel"><div class="panel-head"><div><h2>Meals</h2><p class="muted">Thirteen meals at the current targets. The grams move when the targets move. Olive oil is only in the meals that list it.</p></div></div>' +
+      '<section class="panel"><div class="panel-head"><div><h2>Meals</h2><p class="muted">Portion sizes move when the targets move.</p></div></div>' +
       '<div class="meal-groups">' +
       groups +
       "</div></section>"

@@ -169,8 +169,15 @@
 
   /** Share of the day each slot is meant to cover. They sum to 1.
       Breakfast and lunch: about 42 g protein and 110 g carbs.
-      Snack and dinner split the remaining protein. */
+      About 45% of the snack's calories and protein sit on dinner instead. */
   const DEFAULT_SHARES = {
+    breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
+    lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },
+    snack: { kcal: 235 / 2500, p: 26 / 180, f: 6 / 65, c: 17 / 315 },
+    dinner: { kcal: 815 / 2500, p: 70 / 180, f: 32 / 65, c: 76 / 315 },
+  }
+
+  const HEAVY_SNACK_SHARES = {
     breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
     lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },
     snack: { kcal: 430 / 2500, p: 48 / 180, f: 10 / 65, c: 30 / 315 },
@@ -589,6 +596,7 @@
       activeWeek: 0,
       prices: {},
       shops: {},
+      shopList: [],
     }
   }
 
@@ -648,7 +656,7 @@
       .map(([id, amount]) => {
         const food = FOODS[id]
         const packs = Math.ceil(amount / food.packGrams - 1e-9)
-        const picked = shops[id] === "Costco" || shops[id] === "Trader Joe's" ? shops[id] : food.store
+        const picked = shops[id] && String(shops[id]).trim() ? String(shops[id]).trim() : food.store
         return {
           id,
           name: food.name,
@@ -671,13 +679,37 @@
     )
   }
 
+  function cleanShopName(name) {
+    return String(name || "").trim().slice(0, 40)
+  }
+
   function cleanShops(shops) {
     const next = {}
     if (!shops || typeof shops !== "object") return next
     Object.keys(FOODS).forEach((id) => {
-      if (shops[id] === "Costco" || shops[id] === "Trader Joe's") next[id] = shops[id]
+      const name = cleanShopName(shops[id])
+      if (name) next[id] = name
     })
     return next
+  }
+
+  function cleanShopList(list) {
+    const names = []
+    const seen = new Set(["costco", "trader joe's"])
+    if (!Array.isArray(list)) return names
+    list.forEach((name) => {
+      const trimmed = cleanShopName(name)
+      const key = trimmed.toLowerCase()
+      if (!trimmed || seen.has(key)) return
+      seen.add(key)
+      names.push(trimmed)
+    })
+    return names.slice(0, 12)
+  }
+
+  function presetShares(shares) {
+    if (!shares) return true
+    return closeShares(shares, PREVIOUS_SHARES) || closeShares(shares, HEAVY_SNACK_SHARES)
   }
 
   function packPriceOf(food, prices) {
@@ -784,11 +816,12 @@
     const base = defaultState()
     const next = {
       targets: { ...base.targets, ...(state.targets || {}) },
-      shares: !state.shares || closeShares(state.shares, PREVIOUS_SHARES) ? base.shares : state.shares,
+      shares: presetShares(state.shares) ? base.shares : state.shares,
       weeks: Array.isArray(state.weeks) ? state.weeks : base.weeks,
       activeWeek: Number.isInteger(state.activeWeek) ? state.activeWeek : 0,
       prices: state.prices && typeof state.prices === "object" ? state.prices : {},
       shops: cleanShops(state.shops),
+      shopList: cleanShopList(state.shopList),
     }
     KEYS.forEach((k) => {
       const n = Number(next.targets[k])

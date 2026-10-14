@@ -272,21 +272,18 @@ h1, h2, h3, p { margin: 0; }
   border-top: 1px solid var(--line);
 }
 .line .buy { color: var(--soft); font-size: 0.88rem; }
-.price-col { display: flex; flex-direction: column; gap: 0.35rem; }
-.shop-toggle { display: flex; gap: 0.3rem; }
-.shop-toggle button {
-  flex: 1 1 0;
-  min-height: 44px;
-  border-radius: 10px;
+.price-col { display: flex; align-items: flex-end; gap: 0.4rem; }
+.price-col .price { flex: 1 1 6rem; }
+.shop-pick {
+  flex: 0 1 7.4rem;
+  width: 7.4rem;
+  height: 2rem;
+  font-size: 0.78rem;
+  color: var(--soft);
   border: 1px solid var(--line);
+  border-radius: 8px;
   background: #fff;
-  padding: 0.3rem 0.4rem;
-  font-size: 0.85rem;
-}
-.shop-toggle button.on {
-  background: var(--ink);
-  color: #fffaf3;
-  border-color: var(--ink);
+  padding: 0 0.25rem;
 }
 .price {
   display: flex;

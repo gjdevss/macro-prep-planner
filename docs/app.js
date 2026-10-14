@@ -623,17 +623,15 @@
           line.packPrice.toFixed(2) +
           '" aria-label="' +
           esc(line.name) +
-          ' pack price"></label><div class="shop-toggle" role="group" aria-label="Where you bought ' +
+          ' pack price"></label><select class="shop-pick" data-shop-for="' +
+          line.id +
+          '" aria-label="Shop for ' +
           esc(line.name) +
-          '"><button type="button" data-bought="' +
-          line.id +
-          '" data-store="Costco"' +
-          (store === "Costco" ? ' class="on"' : "") +
-          '>Costco</button><button type="button" data-bought="' +
-          line.id +
-          '" data-store="Trader Joe\'s"' +
-          (store === "Trader Joe's" ? ' class="on"' : "") +
-          ">Trader Joe's</button></div></div><div class=\"money\">" +
+          '">' +
+          shopChoices()
+            .map((name) => '<option' + (name === store ? " selected" : "") + ">" + esc(name) + "</option>")
+            .join("") +
+          '<option value="__add__">Add shop…</option></select></div><div class="money">' +
           P.money(buyCost(line)) +
           '<div class="buy">per ' +
           esc(food.packLabel) +
@@ -644,7 +642,7 @@
     return (
       '<section class="panel"><div class="grand"><div><h2>Shopping</h2><p class="muted">' +
       esc(shopRangeLabel()) +
-      ". October 2026 shelf guesses. Change a price, and mark the shop you bought it from.</p></div><strong>" +
+      ". October 2026 shelf guesses. Change a price, and note the shop if you want.</p></div><strong>" +
       P.money(total) +
       "</strong></div>" +
       '<div class="scope-row"><button type="button" class="scope' +
@@ -746,7 +744,7 @@
       '<div class="targets">' +
       fields +
       "</div>" +
-      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Breakfast and lunch stay near 40 g of protein and 100 to 120 g of carbs. Snack and dinner take more of the protein. Typed sums: ' +
+      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Breakfast and lunch stay near 40 g of protein and 100 to 120 g of carbs. Dinner carries more of the protein than the snack. Typed sums: ' +
       sums +
       '.</p><table class="shares"><thead><tr><th></th><th>Kcal</th><th>Protein</th><th>Fat</th><th>Carbs</th></tr></thead><tbody>' +
       rows +
@@ -828,19 +826,25 @@
       }
       return
     }
-    const bought = event.target.closest("[data-bought]")
-    if (bought) {
-      const id = bought.dataset.bought
-      const pick = bought.dataset.store
-      const food = P.FOODS[id]
-      if (!food || (pick !== "Costco" && pick !== "Trader Joe's")) return
-      const current = (state.shops && state.shops[id]) || food.store
-      if (current === pick) return
-      state.shops = state.shops || {}
-      state.shops[id] = pick
-      commit()
-    }
   })
+
+  function shopChoices() {
+    const names = []
+    const seen = new Set()
+    function add(name) {
+      const trimmed = String(name || "").trim()
+      if (!trimmed) return
+      const key = trimmed.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      names.push(trimmed)
+    }
+    add("Costco")
+    add("Trader Joe's")
+    ;(state.shopList || []).forEach(add)
+    Object.keys(state.shops || {}).forEach((id) => add(state.shops[id]))
+    return names
+  }
 
   app.addEventListener("change", (event) => {
     const target = event.target.closest("[data-target]")
@@ -873,6 +877,34 @@
       else if (Number.isFinite(n) && n >= 0) state.prices[food.id] = (n / food.packGrams) * 100
       commit()
       return
+    }
+    const shop = event.target.closest("[data-shop-for]")
+    if (shop) {
+      const id = shop.dataset.shopFor
+      const food = P.FOODS[id]
+      if (!food) return
+      if (shop.value === "__add__") {
+        const typed = window.prompt("Shop name")
+        const name = typed && typed.trim().slice(0, 40)
+        if (!name) {
+          render()
+          return
+        }
+        const existing = shopChoices().find((choice) => choice.toLowerCase() === name.toLowerCase())
+        const chosen = existing || name
+        if (!existing) {
+          state.shopList = (state.shopList || []).concat(chosen).slice(0, 12)
+        }
+        state.shops = state.shops || {}
+        state.shops[id] = chosen
+        commit()
+        return
+      }
+      const current = (state.shops && state.shops[id]) || food.store
+      if (current === shop.value) return
+      state.shops = state.shops || {}
+      state.shops[id] = shop.value
+      commit()
     }
   })
 

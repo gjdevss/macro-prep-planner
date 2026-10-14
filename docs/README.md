@@ -2,7 +2,7 @@
 
 A meal plan you can open on your phone or your computer. Breakfast is the berry shake. Lunch, snack, and dinner each have four swaps. Changing the day targets changes the grams, not the foods.
 
-The page is static. GitHub Pages can host it. What you type stays in the browser that you typed it in.
+The page is static. GitHub Pages can host it. What you type is stored in one shared plan, so the phone and the computer stay on the same week. Each browser also keeps a copy, so the page still opens if that shared copy is briefly unreachable.
 
 ## Put it on GitHub Pages
 
@@ -11,13 +11,13 @@ The page is static. GitHub Pages can host it. What you type stays in the browser
 3. In the repository, open Settings → Pages → Build and deployment. Choose Deploy from a branch. Branch `main`, folder `/ (root)`. Save.
 4. Wait a minute. Open the Pages link in Safari on your phone and in the browser on your computer.
 
-The default meals are visible to anyone who can open the link or the repository. Your saved weeks, price edits, and targets are not in the repository. A private repository does not hide a GitHub Pages site.
+The default meals are visible to anyone who can open the link or the repository. A private repository does not hide a GitHub Pages site. The shared plan is also visible to anyone who reads the page source. That is the copy your phone and your computer both open.
 
 ## What stays when you close the tab
 
-The plan is stored in that browser under the name `plate-plan-v1`. Closing the tab keeps it. Clearing browser data deletes it. The phone and the computer do not share it.
+Closing the tab keeps the plan. Open the same page on your phone or your computer and the latest week is there. The page checks the shared plan every few seconds while it is open.
 
-On Targets, **Copy plan** puts the whole plan on the clipboard. On the other device, open Targets, paste, and choose **Use pasted plan**. **Download plan** writes `plate-plan.json` if paste is awkward.
+On Targets, **Copy plan** and **Download plan** keep a backup file.
 
 ## Open it on this computer before you upload
 

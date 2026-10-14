@@ -1,9 +1,18 @@
-/* Plate. The plan stays in this browser under the key plate-plan-v1. */
+/* Plate. The plan is shared, so the phone and the computer open the same week. */
 (function () {
   const P = window.Planner
   const app = document.getElementById("app")
+  const SYNC_LIST = "https://crudcrud.com/api/701dffd849064b0e84ba156d817d8593/plate"
 
   let state = P.load()
+  let rev = Number(localStorage.getItem("plate-plan-rev") || 0)
+  let writeId = localStorage.getItem("plate-plan-write") || ""
+  let recordId = ""
+  let syncStatus = "Opening the shared plan…"
+  let pushing = false
+  let pushAgain = false
+  let epoch = 0
+  let pullPromise = null
   let view = "plan"
   let dayIndex = 0
   let shopScope = "month"
@@ -31,11 +40,176 @@
     return round0(n) + " g"
   }
 
+  function rememberMeta() {
+    localStorage.setItem("plate-plan-rev", String(rev))
+    localStorage.setItem("plate-plan-write", writeId)
+  }
+
+  function newWriteId() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36)
+  }
+
+  function editingField() {
+    const el = document.activeElement
+    return el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")
+  }
+
+  function paintStatus() {
+    const foot = document.querySelector(".foot")
+    if (foot) foot.textContent = syncStatus
+  }
+
+  function localEdited() {
+    return JSON.stringify(state) !== JSON.stringify(P.defaultState())
+  }
+
+  async function listRemote() {
+    const res = await fetch(SYNC_LIST, { cache: "no-store" })
+    if (!res.ok) throw new Error(String(res.status))
+    const data = await res.json()
+    return Array.isArray(data) ? data : []
+  }
+
+  function newest(records) {
+    return records.slice().sort((a, b) => (b.rev || 0) - (a.rev || 0) || (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null
+  }
+
+  function adopt(remote) {
+    state = P.sanitize(remote.state)
+    rev = remote.rev || 0
+    writeId = remote.writeId || ""
+    recordId = remote._id || recordId
+    P.save(state)
+    rememberMeta()
+    cacheKey = ""
+  }
+
+  async function dropExtras(keepId, keepRev) {
+    const records = await listRemote()
+    await Promise.all(
+      records
+        .filter((item) => item._id && item._id !== keepId && (item.rev || 0) < keepRev)
+        .map((item) => fetch(SYNC_LIST + "/" + item._id, { method: "DELETE" })),
+    )
+  }
+
+  async function pushNow() {
+    if (rev <= 0) return
+    if (pushing) {
+      pushAgain = true
+      return
+    }
+    pushing = true
+    syncStatus = "Saving the shared plan…"
+    paintStatus()
+    try {
+      const body = { rev, updatedAt: Math.floor(Date.now() / 1000), writeId, state }
+      let remote = newest(await listRemote())
+      if (remote && (remote.rev || 0) > rev) {
+        rev = remote.rev + 1
+        writeId = newWriteId()
+        body.rev = rev
+        body.writeId = writeId
+        rememberMeta()
+      }
+      if (remote) recordId = remote._id
+      if (!recordId) {
+        const res = await fetch(SYNC_LIST, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) throw new Error(String(res.status))
+        const created = await res.json()
+        recordId = created._id
+      } else {
+        const res = await fetch(SYNC_LIST + "/" + recordId, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+        if (res.status === 404) {
+          recordId = ""
+          pushing = false
+          return pushNow()
+        }
+        if (!res.ok) throw new Error(String(res.status))
+      }
+      try {
+        await dropExtras(recordId, rev)
+      } catch (cleanup) {
+        /* The saved plan is already in place. */
+      }
+      syncStatus = "Same plan on your phone and computer."
+    } catch (err) {
+      syncStatus = "Saved on this device. The shared copy will catch up when the connection is back."
+    }
+    pushing = false
+    paintStatus()
+    if (pushAgain) {
+      pushAgain = false
+      pushNow()
+    }
+  }
+
+  function pull() {
+    if (pullPromise) return pullPromise
+    const seen = epoch
+    pullPromise = pullBody(seen).finally(() => {
+      pullPromise = null
+    })
+    return pullPromise
+  }
+
+  async function pullBody(seen) {
+    try {
+      const remote = newest(await listRemote())
+      if (epoch !== seen || pushing) return
+      if (!remote) {
+        if (rev > 0 || localEdited()) {
+          if (rev <= 0) {
+            rev = 1
+            writeId = newWriteId()
+            rememberMeta()
+          }
+          await pushNow()
+        } else {
+          syncStatus = "Same plan on your phone and computer."
+          paintStatus()
+        }
+        return
+      }
+      recordId = remote._id
+      const remoteNewer = (remote.rev || 0) > rev
+      const collided = (remote.rev || 0) === rev && remote.writeId && writeId && remote.writeId !== writeId
+      if ((remoteNewer || collided) && !editingField()) {
+        adopt(remote)
+        syncStatus = "Same plan on your phone and computer."
+        render()
+        return
+      }
+      if ((remote.rev || 0) < rev) {
+        await pushNow()
+        return
+      }
+      syncStatus = "Same plan on your phone and computer."
+      paintStatus()
+    } catch (err) {
+      syncStatus = "Saved on this device. The shared copy will catch up when the connection is back."
+      paintStatus()
+    }
+  }
+
   function commit() {
     state = P.sanitize(state)
+    epoch += 1
+    rev += 1
+    writeId = newWriteId()
     P.save(state)
+    rememberMeta()
     cacheKey = ""
     render()
+    pushNow()
   }
 
   function getCache() {
@@ -117,7 +291,7 @@
       (view === "targets" ? renderTargets() : "") +
       (picker ? renderPicker(cache) : "") +
       (notice ? '<div class="toast">' + esc(notice) + "</div>" : "") +
-      '<p class="foot">Saved in this browser. GitHub does not receive what you type. Copy the plan if you want the same week on your phone and your computer.</p></div>'
+      '<p class="foot">' + esc(syncStatus) + "</p></div>"
   }
 
   function shell(monthCost) {
@@ -533,7 +707,7 @@
       "</tbody></table><p class=\"hint\">Used as " +
       esc(usedLine) +
       '.</p><button type="button" class="ghost" data-normalize="1">Make each column add to 100</button></details>' +
-      '<div class="file-box"><h3 style="font-family:var(--serif);font-weight:560">Keep this plan</h3><p class="muted">Closing the page does not clear it. The memory belongs to this browser on this device. Private GitHub does not hide the page, and it also does not store your edits. People with the link can see the default meals. They cannot see a plan you have not pasted into the repo.</p>' +
+      '<div class="file-box"><h3 style="font-family:var(--serif);font-weight:560">Keep this plan</h3><p class="muted">The phone and the computer open the same plan. Closing the page keeps it here too. Copy plan downloads a backup. Anyone who can read this page\'s code can also see the shared meals.</p>' +
       '<div class="action-row"><button type="button" class="solid" data-export="1">Copy plan</button><button type="button" class="ghost" data-download="1">Download plan</button><button type="button" class="ghost" data-reset="1">Reset</button></div>' +
       '<label>Paste a plan from the other device<textarea data-import>' +
       esc(importText) +
@@ -732,4 +906,12 @@
   }
 
   render()
+  pull()
+  setInterval(() => {
+    if (document.visibilityState === "visible") pull()
+  }, 8000)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") pull()
+  })
+  window.PlateSync = { pull }
 })()

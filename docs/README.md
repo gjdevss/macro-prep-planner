@@ -17,7 +17,7 @@ The default meals are visible to anyone who can open the link or the repository.
 
 Closing the tab keeps the plan. Open the same page on your phone or your computer and the latest week is there. The page loads the shared plan when you open it, again when you come back to the tab, and about every 20 seconds while the tab stays open. A change on the phone shows up on the computer after that check. The shared copy does not disappear when you close the tab.
 
-On Targets, **Copy plan** and **Download plan** keep a backup file.
+On Targets, **Reset plan** puts the meals, targets, prices, and shop marks back to the start.
 
 ## Open it on this computer before you upload
 
@@ -33,6 +33,6 @@ Then open `http://127.0.0.1:4317`.
 
 Default day: 2,500 kcal, 180 g protein, 65 g fat, 315 g carbs. Changing calories scales the other three with it. Amounts land on 10 g steps, oil on 5 g, eggs as whole eggs, sardines as one 120 g can. The day can drift by a few dozen calories. The page shows the real total.
 
-Lunch is the meal after training, so it carries most of the protein. Dinner carries more of the fat. The snack is optional.
+Breakfast and lunch stay near 40 g of protein and 100 to 120 g of carbs. Snack and dinner carry more of the protein.
 
-Stores are Costco and Trader Joe's. Prices are October 2026 shelf guesses. Edit them on the shop list. They are remembered in the browser. There is no live price connection.
+The shop list is one list. Mark Costco or Trader Joe's next to a price for the next trip. Switch the list between this week, two weeks, and the month. Prices are October 2026 shelf guesses. There is no live price connection.

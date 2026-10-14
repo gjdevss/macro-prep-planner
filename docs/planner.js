@@ -167,8 +167,17 @@
 
   const DEFAULT_TARGETS = { kcal: 2500, p: 180, f: 65, c: 315 }
 
-  /** Share of the day each slot is meant to cover. They sum to 1. */
+  /** Share of the day each slot is meant to cover. They sum to 1.
+      Breakfast and lunch: about 42 g protein and 110 g carbs.
+      Snack and dinner split the remaining protein. */
   const DEFAULT_SHARES = {
+    breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
+    lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },
+    snack: { kcal: 430 / 2500, p: 48 / 180, f: 10 / 65, c: 30 / 315 },
+    dinner: { kcal: 620 / 2500, p: 48 / 180, f: 28 / 65, c: 63 / 315 },
+  }
+
+  const PREVIOUS_SHARES = {
     breakfast: { kcal: 0.272, p: 0.272, f: 0.143, c: 0.339 },
     lunch: { kcal: 0.369, p: 0.461, f: 0.317, c: 0.335 },
     dinner: { kcal: 0.266, p: 0.161, f: 0.476, c: 0.225 },
@@ -579,6 +588,7 @@
       weeks: [blankWeek(), blankWeek(), blankWeek(), blankWeek()],
       activeWeek: 0,
       prices: {},
+      shops: {},
     }
   }
 
@@ -632,31 +642,42 @@
 
   function shopping(state, cache, weekIndexes) {
     const totals = collect(state, cache, weekIndexes)
-    const lines = Object.entries(totals)
+    const shops = state.shops || {}
+    return Object.entries(totals)
       .filter(([, amount]) => amount > 0)
       .map(([id, amount]) => {
         const food = FOODS[id]
         const packs = Math.ceil(amount / food.packGrams - 1e-9)
-        const cost = food.piece
-          ? (pricePer100(food, state.prices) / 100) * amount
-          : (pricePer100(food, state.prices) / 100) * amount
+        const picked = shops[id] === "Costco" || shops[id] === "Trader Joe's" ? shops[id] : food.store
         return {
           id,
           name: food.name,
-          store: food.store,
+          store: picked,
           amount,
           piece: food.piece,
           packs,
           packLabel: food.packLabel,
           packPrice: packPriceOf(food, state.prices),
-          cost,
+          cost: (pricePer100(food, state.prices) / 100) * amount,
         }
       })
-    const stores = ["Costco", "Trader Joe's"]
-    return stores.map((store) => ({
-      store,
-      lines: lines.filter((line) => line.store === store).sort((a, b) => a.name.localeCompare(b.name)),
-    }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  function closeShares(a, b) {
+    if (!a || !b) return false
+    return SLOTS.every((slot) =>
+      KEYS.every((k) => Math.abs((Number(a[slot] && a[slot][k]) || 0) - (Number(b[slot] && b[slot][k]) || 0)) < 0.002),
+    )
+  }
+
+  function cleanShops(shops) {
+    const next = {}
+    if (!shops || typeof shops !== "object") return next
+    Object.keys(FOODS).forEach((id) => {
+      if (shops[id] === "Costco" || shops[id] === "Trader Joe's") next[id] = shops[id]
+    })
+    return next
   }
 
   function packPriceOf(food, prices) {
@@ -763,10 +784,11 @@
     const base = defaultState()
     const next = {
       targets: { ...base.targets, ...(state.targets || {}) },
-      shares: state.shares || base.shares,
+      shares: !state.shares || closeShares(state.shares, PREVIOUS_SHARES) ? base.shares : state.shares,
       weeks: Array.isArray(state.weeks) ? state.weeks : base.weeks,
       activeWeek: Number.isInteger(state.activeWeek) ? state.activeWeek : 0,
       prices: state.prices && typeof state.prices === "object" ? state.prices : {},
+      shops: cleanShops(state.shops),
     }
     KEYS.forEach((k) => {
       const n = Number(next.targets[k])
@@ -833,5 +855,6 @@
     sanitize,
     normalizeShares,
     slotTarget,
+    closeShares,
   }
 })

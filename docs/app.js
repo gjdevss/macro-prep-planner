@@ -20,7 +20,6 @@
   let shopScope = "month"
   let picker = null
   let notice = ""
-  let importText = ""
   let cacheKey = ""
   let scaledCache = null
 
@@ -104,12 +103,19 @@
   }
 
   function adopt(remote) {
+    const before = remote.state && remote.state.shares
     state = P.sanitize(remote.state)
     rev = remote.rev || 0
     writeId = remote.writeId || ""
     P.save(state)
     rememberMeta()
     cacheKey = ""
+    if (!P.closeShares(before, state.shares)) {
+      rev += 1
+      writeId = newWriteId()
+      rememberMeta()
+      pushNow(true)
+    }
   }
 
   async function pushNow(force) {
@@ -129,7 +135,7 @@
         if (!hand) {
           if (!editingField()) {
             adopt(remote)
-            syncStatus = "Same plan on your phone and computer."
+            syncStatus = "Plan synced."
             render()
           }
           return
@@ -139,7 +145,7 @@
         rememberMeta()
       }
       if (remote && (remote.rev || 0) === rev && remote.writeId === writeId) {
-        syncStatus = "Same plan on your phone and computer."
+        syncStatus = "Plan synced."
         return
       }
       await writeRemote(envelope())
@@ -159,7 +165,7 @@
           await writeRemote(envelope())
         }
       }
-      syncStatus = "Same plan on your phone and computer."
+      syncStatus = "Plan synced."
     } catch (err) {
       syncStatus = "Saved on this device. The shared copy will catch up when the connection is back."
     } finally {
@@ -196,7 +202,7 @@
           }
           await pushNow(false)
         } else {
-          syncStatus = "Same plan on your phone and computer."
+          syncStatus = "Plan synced."
           paintStatus()
         }
         return
@@ -205,7 +211,7 @@
       const collided = (remote.rev || 0) === rev && remote.writeId && writeId && remote.writeId !== writeId
       if ((remoteNewer || collided) && !editingField()) {
         adopt(remote)
-        syncStatus = "Same plan on your phone and computer."
+        syncStatus = "Plan synced."
         render()
         return
       }
@@ -213,7 +219,15 @@
         await pushNow(false)
         return
       }
-      syncStatus = "Same plan on your phone and computer."
+      if (!P.closeShares(remote.state && remote.state.shares, state.shares)) {
+        rev += 1
+        writeId = newWriteId()
+        rememberMeta()
+        P.save(state)
+        await pushNow(true)
+        return
+      }
+      syncStatus = "Plan synced."
       paintStatus()
     } catch (err) {
       syncStatus = "Saved on this device. The shared copy will catch up when the connection is back."
@@ -433,7 +447,7 @@
           ". Ten gram steps" +
           (day.dinner === "dinner-sardines" ? " and a whole can of sardines" : "") +
           " move the total. The number here is the real plate.</p>"
-        : '<p class="ok-note">Breakfast, then train, then lunch. The snack is optional. Dinner closes the day.</p>'
+        : ""
     return (
       '<div class="week-row">' +
       weeks +
@@ -469,7 +483,7 @@
       "</div>" +
       banner +
       blocks +
-      '<p class="hint">Weights are raw. Chicken shrinks to about three quarters. Dry rice about triples. On a computer you can drag a meal onto a day. On a phone, tap the meal, then tap the one you want.</p></section>'
+      "</section>"
     )
   }
 
@@ -562,7 +576,15 @@
   }
 
   function weekIndexes() {
-    return shopScope === "month" ? [0, 1, 2, 3] : [state.activeWeek]
+    if (shopScope === "month") return [0, 1, 2, 3]
+    if (shopScope === "biweek") return state.activeWeek < 2 ? [0, 1] : [2, 3]
+    return [state.activeWeek]
+  }
+
+  function shopRangeLabel() {
+    if (shopScope === "week") return "Week " + (state.activeWeek + 1)
+    if (shopScope === "biweek") return state.activeWeek < 2 ? "Weeks 1 and 2" : "Weeks 3 and 4"
+    return "All four weeks"
   }
 
   function buyCost(line) {
@@ -570,17 +592,11 @@
   }
 
   function weekBuy(cache, weekIndex) {
-    return P.shopping(state, cache, [weekIndex]).reduce(
-      (sum, store) => sum + store.lines.reduce((s, line) => s + buyCost(line), 0),
-      0,
-    )
+    return P.shopping(state, cache, [weekIndex]).reduce((sum, line) => sum + buyCost(line), 0)
   }
 
   function rangeBuy(cache, indexes) {
-    return P.shopping(state, cache, indexes).reduce(
-      (sum, store) => sum + store.lines.reduce((s, line) => s + buyCost(line), 0),
-      0,
-    )
+    return P.shopping(state, cache, indexes).reduce((sum, line) => sum + buyCost(line), 0)
   }
 
   function monthBuy(cache) {
@@ -588,49 +604,58 @@
   }
 
   function renderShop(cache) {
-    const groups = P.shopping(state, cache, weekIndexes())
-    const total = groups.reduce((sum, store) => sum + store.lines.reduce((s, line) => s + buyCost(line), 0), 0)
-    const stores = groups
-      .map((store) => {
-        const sub = store.lines.reduce((s, line) => s + buyCost(line), 0)
-        const lines = store.lines
-          .map((line) => {
-            const food = P.FOODS[line.id]
-            return (
-              '<div class="line"><div><strong>' +
-              esc(line.name) +
-              '</strong><div class="buy">Use ' +
-              esc(usedLabel(line)) +
-              " · " +
-              esc(buyLabel(line)) +
-              '</div></div><label class="price">Pack price<input inputmode="decimal" data-price="' +
-              line.id +
-              '" value="' +
-              line.packPrice.toFixed(2) +
-              '" aria-label="' +
-              esc(line.name) +
-              ' pack price"></label><div class="money">' +
-              P.money(buyCost(line)) +
-              "<div class=\"buy\">per " +
-              esc(food.packLabel) +
-              "</div></div></div>"
-            )
-          })
-          .join("")
-        return '<section class="store"><h3>' + esc(store.store) + " · " + P.money(sub) + "</h3>" + lines + "</section>"
+    const lines = P.shopping(state, cache, weekIndexes())
+    const total = lines.reduce((sum, line) => sum + buyCost(line), 0)
+    const rows = lines
+      .map((line) => {
+        const food = P.FOODS[line.id]
+        const store = line.store
+        return (
+          '<div class="line"><div><strong>' +
+          esc(line.name) +
+          '</strong><div class="buy">Use ' +
+          esc(usedLabel(line)) +
+          " · " +
+          esc(buyLabel(line)) +
+          '</div></div><div class="price-col"><label class="price">Pack price<input inputmode="decimal" data-price="' +
+          line.id +
+          '" value="' +
+          line.packPrice.toFixed(2) +
+          '" aria-label="' +
+          esc(line.name) +
+          ' pack price"></label><div class="shop-toggle" role="group" aria-label="Where you bought ' +
+          esc(line.name) +
+          '"><button type="button" data-bought="' +
+          line.id +
+          '" data-store="Costco"' +
+          (store === "Costco" ? ' class="on"' : "") +
+          '>Costco</button><button type="button" data-bought="' +
+          line.id +
+          '" data-store="Trader Joe\'s"' +
+          (store === "Trader Joe's" ? ' class="on"' : "") +
+          ">Trader Joe's</button></div></div><div class=\"money\">" +
+          P.money(buyCost(line)) +
+          '<div class="buy">per ' +
+          esc(food.packLabel) +
+          "</div></div></div>"
+        )
       })
       .join("")
     return (
-      '<section class="panel"><div class="grand"><div><h2>Shopping</h2><p class="muted">October 2026 shelf guesses for Costco and Trader Joe\'s. Change a price and this browser keeps it. There is no live price feed.</p></div><strong>' +
+      '<section class="panel"><div class="grand"><div><h2>Shopping</h2><p class="muted">' +
+      esc(shopRangeLabel()) +
+      ". October 2026 shelf guesses. Change a price, and mark the shop you bought it from.</p></div><strong>" +
       P.money(total) +
       "</strong></div>" +
       '<div class="scope-row"><button type="button" class="scope' +
       (shopScope === "week" ? " on" : "") +
       '" data-shop="week">This week</button><button type="button" class="scope' +
+      (shopScope === "biweek" ? " on" : "") +
+      '" data-shop="biweek">Two weeks</button><button type="button" class="scope' +
       (shopScope === "month" ? " on" : "") +
       '" data-shop="month">This month</button></div>' +
-      stores +
-      '<p class="hint">Buy counts are packs rounded up. The dollar figure is those packs, so it sits a little above the food you will actually eat. Chicken at Trader Joe\'s instead of Costco is the expensive swap. Leave receipts out of the repo.</p></section>'
+      rows +
+      '<p class="hint">Buy counts are packs rounded up. The dollar figure is those packs, so it sits a little above the food you will actually eat.</p></section>'
     )
   }
 
@@ -721,19 +746,14 @@
       '<div class="targets">' +
       fields +
       "</div>" +
-      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Lunch holds the protein because you train before it. Dinner holds more of the fat. Typed sums: ' +
+      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Breakfast and lunch stay near 40 g of protein and 100 to 120 g of carbs. Snack and dinner take more of the protein. Typed sums: ' +
       sums +
       '.</p><table class="shares"><thead><tr><th></th><th>Kcal</th><th>Protein</th><th>Fat</th><th>Carbs</th></tr></thead><tbody>' +
       rows +
       "</tbody></table><p class=\"hint\">Used as " +
       esc(usedLine) +
       '.</p><button type="button" class="ghost" data-normalize="1">Make each column add to 100</button></details>' +
-      '<div class="file-box"><h3 style="font-family:var(--serif);font-weight:560">Keep this plan</h3><p class="muted">The phone and the computer open the same plan. Come back to this tab, or leave it open, and the other device catches up. Copy plan downloads a backup. Anyone who can read this page\'s code can also see or change the shared meals.</p>' +
-      '<div class="action-row"><button type="button" class="solid" data-export="1">Copy plan</button><button type="button" class="ghost" data-download="1">Download plan</button><button type="button" class="ghost" data-reset="1">Reset</button></div>' +
-      '<label>Paste a plan from the other device<textarea data-import>' +
-      esc(importText) +
-      '</textarea></label><button type="button" class="solid" data-apply-import="1">Use pasted plan</button>' +
-      '<label class="ghost" style="display:inline-flex;align-items:center">Or choose a file<input type="file" accept="application/json" data-file hidden></label></div></section>'
+      '<div class="action-row" style="margin-top:1rem"><button type="button" class="ghost" data-reset="1">Reset plan</button></div></section>'
     )
   }
 
@@ -802,35 +822,23 @@
       return
     }
     if (event.target.closest("[data-reset]")) {
-      if (window.confirm("Reset meals, targets, and prices on this browser?")) {
+      if (window.confirm("Reset meals, targets, prices, and shop marks?")) {
         state = P.defaultState()
-        importText = ""
         commit()
       }
       return
     }
-    if (event.target.closest("[data-export]")) {
-      const text = JSON.stringify(state)
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(
-          () => flash("Plan copied. Paste it on the other device."),
-          () => flash("Clipboard blocked. Download the file instead."),
-        )
-      } else flash("Clipboard blocked. Download the file instead.")
-      return
-    }
-    if (event.target.closest("[data-download]")) {
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = "plate-plan.json"
-      a.click()
-      URL.revokeObjectURL(url)
-      return
-    }
-    if (event.target.closest("[data-apply-import]")) {
-      applyText(importText)
+    const bought = event.target.closest("[data-bought]")
+    if (bought) {
+      const id = bought.dataset.bought
+      const pick = bought.dataset.store
+      const food = P.FOODS[id]
+      if (!food || (pick !== "Costco" && pick !== "Trader Joe's")) return
+      const current = (state.shops && state.shops[id]) || food.store
+      if (current === pick) return
+      state.shops = state.shops || {}
+      state.shops[id] = pick
+      commit()
     }
   })
 
@@ -866,17 +874,6 @@
       commit()
       return
     }
-    const file = event.target.closest("[data-file]")
-    if (file && file.files && file.files[0]) {
-      const reader = new FileReader()
-      reader.onload = () => applyText(String(reader.result || ""))
-      reader.readAsText(file.files[0])
-    }
-  })
-
-  app.addEventListener("input", (event) => {
-    const box = event.target.closest("[data-import]")
-    if (box) importText = box.value
   })
 
   app.addEventListener("dragstart", (event) => {
@@ -912,19 +909,6 @@
       render()
     }
   })
-
-  function applyText(text) {
-    try {
-      const parsed = JSON.parse(text)
-      state = P.sanitize(parsed)
-      importText = ""
-      view = "plan"
-      commit()
-      flash("Plan loaded on this browser.")
-    } catch (e) {
-      flash("That text is not a plan file.")
-    }
-  }
 
   render()
   pull()

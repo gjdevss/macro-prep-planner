@@ -4,7 +4,7 @@ A one-page meal plan for GitHub Pages. Open `docs/index.html` on your phone or y
 
 Breakfast is one shake. Lunch, snack, and dinner rotate. A master switch for calories, protein, fat, and carbs rescales the grams. Swapping a meal inside a slot keeps the day in the same place, within the rounding.
 
-What you change is saved for both your phone and your computer. See `docs/README.md` for the GitHub Pages steps.
+What you change is saved for both your phone and your computer. Open the page, or come back to it, and the other device picks up the same week. See `docs/README.md` for the GitHub Pages steps.
 
 ## Look at it locally
 

@@ -2,15 +2,17 @@
 (function () {
   const P = window.Planner
   const app = document.getElementById("app")
-  const SYNC_LIST = "https://crudcrud.com/api/701dffd849064b0e84ba156d817d8593/plate"
+  const SYNC_PAGE = "https://rentry.co/plateplan47c1e9533ff1"
+  const SYNC_EDIT = "https://rentry.co/api/edit/plateplan47c1e9533ff1"
+  const SYNC_CODE = "b73d767c61d1fed04f2d635f"
 
   let state = P.load()
   let rev = Number(localStorage.getItem("plate-plan-rev") || 0)
   let writeId = localStorage.getItem("plate-plan-write") || ""
-  let recordId = ""
   let syncStatus = "Opening the shared plan…"
   let pushing = false
   let pushAgain = false
+  let pushForce = false
   let epoch = 0
   let pullPromise = null
   let view = "plan"
@@ -63,92 +65,112 @@
     return JSON.stringify(state) !== JSON.stringify(P.defaultState())
   }
 
-  async function listRemote() {
-    const res = await fetch(SYNC_LIST, { cache: "no-store" })
-    if (!res.ok) throw new Error(String(res.status))
-    const data = await res.json()
-    return Array.isArray(data) ? data : []
+  function articleText(html) {
+    const doc = new DOMParser().parseFromString(html, "text/html")
+    const article = doc.querySelector(".entry-text article")
+    return article ? article.textContent.trim() : ""
   }
 
-  function newest(records) {
-    return records.slice().sort((a, b) => (b.rev || 0) - (a.rev || 0) || (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null
+  async function readRemote() {
+    const res = await fetch(SYNC_PAGE + "?t=" + Date.now(), { cache: "no-store" })
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(String(res.status))
+    const text = articleText(await res.text())
+    if (!text.startsWith("{")) return null
+    try {
+      const data = JSON.parse(text)
+      if (!data || typeof data !== "object" || !data.state || typeof data.rev !== "number") return null
+      return data
+    } catch (err) {
+      return null
+    }
+  }
+
+  async function writeRemote(body) {
+    const res = await fetch(SYNC_EDIT, {
+      method: "POST",
+      body: new URLSearchParams({
+        edit_code: SYNC_CODE,
+        text: JSON.stringify(body),
+      }),
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const payload = await res.json()
+    if (String(payload.status) !== "200") throw new Error(payload.content || "save failed")
+  }
+
+  function envelope() {
+    return { rev, updatedAt: Math.floor(Date.now() / 1000), writeId, state }
   }
 
   function adopt(remote) {
     state = P.sanitize(remote.state)
     rev = remote.rev || 0
     writeId = remote.writeId || ""
-    recordId = remote._id || recordId
     P.save(state)
     rememberMeta()
     cacheKey = ""
   }
 
-  async function dropExtras(keepId, keepRev) {
-    const records = await listRemote()
-    await Promise.all(
-      records
-        .filter((item) => item._id && item._id !== keepId && (item.rev || 0) < keepRev)
-        .map((item) => fetch(SYNC_LIST + "/" + item._id, { method: "DELETE" })),
-    )
-  }
-
-  async function pushNow() {
+  async function pushNow(force) {
     if (rev <= 0) return
     if (pushing) {
       pushAgain = true
+      pushForce = pushForce || !!force
       return
     }
     pushing = true
+    const hand = !!force
     syncStatus = "Saving the shared plan…"
     paintStatus()
     try {
-      const body = { rev, updatedAt: Math.floor(Date.now() / 1000), writeId, state }
-      let remote = newest(await listRemote())
+      const remote = await readRemote()
       if (remote && (remote.rev || 0) > rev) {
+        if (!hand) {
+          if (!editingField()) {
+            adopt(remote)
+            syncStatus = "Same plan on your phone and computer."
+            render()
+          }
+          return
+        }
         rev = remote.rev + 1
         writeId = newWriteId()
-        body.rev = rev
-        body.writeId = writeId
         rememberMeta()
       }
-      if (remote) recordId = remote._id
-      if (!recordId) {
-        const res = await fetch(SYNC_LIST, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        })
-        if (!res.ok) throw new Error(String(res.status))
-        const created = await res.json()
-        recordId = created._id
-      } else {
-        const res = await fetch(SYNC_LIST + "/" + recordId, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        })
-        if (res.status === 404) {
-          recordId = ""
-          pushing = false
-          return pushNow()
-        }
-        if (!res.ok) throw new Error(String(res.status))
+      if (remote && (remote.rev || 0) === rev && remote.writeId === writeId) {
+        syncStatus = "Same plan on your phone and computer."
+        return
       }
-      try {
-        await dropExtras(recordId, rev)
-      } catch (cleanup) {
-        /* The saved plan is already in place. */
+      await writeRemote(envelope())
+      const check = await readRemote()
+      if (check && check.writeId !== writeId) {
+        if (!hand && (check.rev || 0) >= rev) {
+          if (!editingField()) {
+            adopt(check)
+            render()
+          }
+        } else if ((check.rev || 0) < rev) {
+          await writeRemote(envelope())
+        } else if (hand) {
+          rev = (check.rev || rev) + 1
+          writeId = newWriteId()
+          rememberMeta()
+          await writeRemote(envelope())
+        }
       }
       syncStatus = "Same plan on your phone and computer."
     } catch (err) {
       syncStatus = "Saved on this device. The shared copy will catch up when the connection is back."
-    }
-    pushing = false
-    paintStatus()
-    if (pushAgain) {
-      pushAgain = false
-      pushNow()
+    } finally {
+      pushing = false
+      paintStatus()
+      if (pushAgain) {
+        const again = pushForce
+        pushAgain = false
+        pushForce = false
+        pushNow(again)
+      }
     }
   }
 
@@ -163,7 +185,7 @@
 
   async function pullBody(seen) {
     try {
-      const remote = newest(await listRemote())
+      const remote = await readRemote()
       if (epoch !== seen || pushing) return
       if (!remote) {
         if (rev > 0 || localEdited()) {
@@ -172,14 +194,13 @@
             writeId = newWriteId()
             rememberMeta()
           }
-          await pushNow()
+          await pushNow(false)
         } else {
           syncStatus = "Same plan on your phone and computer."
           paintStatus()
         }
         return
       }
-      recordId = remote._id
       const remoteNewer = (remote.rev || 0) > rev
       const collided = (remote.rev || 0) === rev && remote.writeId && writeId && remote.writeId !== writeId
       if ((remoteNewer || collided) && !editingField()) {
@@ -189,7 +210,7 @@
         return
       }
       if ((remote.rev || 0) < rev) {
-        await pushNow()
+        await pushNow(false)
         return
       }
       syncStatus = "Same plan on your phone and computer."
@@ -209,7 +230,7 @@
     rememberMeta()
     cacheKey = ""
     render()
-    pushNow()
+    pushNow(true)
   }
 
   function getCache() {
@@ -707,7 +728,7 @@
       "</tbody></table><p class=\"hint\">Used as " +
       esc(usedLine) +
       '.</p><button type="button" class="ghost" data-normalize="1">Make each column add to 100</button></details>' +
-      '<div class="file-box"><h3 style="font-family:var(--serif);font-weight:560">Keep this plan</h3><p class="muted">The phone and the computer open the same plan. Closing the page keeps it here too. Copy plan downloads a backup. Anyone who can read this page\'s code can also see the shared meals.</p>' +
+      '<div class="file-box"><h3 style="font-family:var(--serif);font-weight:560">Keep this plan</h3><p class="muted">The phone and the computer open the same plan. Come back to this tab, or leave it open, and the other device catches up. Copy plan downloads a backup. Anyone who can read this page\'s code can also see or change the shared meals.</p>' +
       '<div class="action-row"><button type="button" class="solid" data-export="1">Copy plan</button><button type="button" class="ghost" data-download="1">Download plan</button><button type="button" class="ghost" data-reset="1">Reset</button></div>' +
       '<label>Paste a plan from the other device<textarea data-import>' +
       esc(importText) +
@@ -909,9 +930,10 @@
   pull()
   setInterval(() => {
     if (document.visibilityState === "visible") pull()
-  }, 8000)
+  }, 20000)
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") pull()
   })
+  window.addEventListener("focus", () => pull())
   window.PlateSync = { pull }
 })()

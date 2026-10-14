@@ -15,7 +15,7 @@ The default meals are visible to anyone who can open the link or the repository.
 
 ## What stays when you close the tab
 
-Closing the tab keeps the plan. Open the same page on your phone or your computer and the latest week is there. The page checks the shared plan every few seconds while it is open.
+Closing the tab keeps the plan. Open the same page on your phone or your computer and the latest week is there. The page loads the shared plan when you open it, again when you come back to the tab, and about every 20 seconds while the tab stays open. A change on the phone shows up on the computer after that check. The shared copy does not disappear when you close the tab.
 
 On Targets, **Copy plan** and **Download plan** keep a backup file.
 

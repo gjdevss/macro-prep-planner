@@ -401,7 +401,8 @@
       const solved = fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil)
       const looseProtein = fixedParts.some((p) => p.food === "sardines")
       const refined = refine(solved, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein)
-      const built = materialize(meal, refined, proteinParts, carbParts)
+      let built = materialize(meal, refined, proteinParts, carbParts)
+      if (meal.slot === "snack") built = built.filter((item) => item.food !== "oil")
       const actual = macrosOf(built)
       const err = errorScore(actual, target, looseProtein)
       if (!best || err < best.err) best = { items: built, actual, err, meal }
@@ -637,9 +638,16 @@
 
   /* Yogurt is nonfat, so the snack solver used to pour olive oil on it to hit the fat target.
      That oil moves onto lunch on the days that snack is yogurt. Cottage cheese already has its own fat. */
+  function withoutOil(scaled, prices) {
+    if (!scaled.items.some((item) => item.food === "oil")) return scaled
+    const items = scaled.items.filter((item) => item.food !== "oil")
+    return { meal: scaled.meal, items, actual: macrosOf(items), cost: costOf(items, prices), target: scaled.target }
+  }
+
   function mealOnDay(state, cache, day, slot) {
     const scaled = cache[day[slot]]
     if (!scaled) return scaled
+    if (slot === "snack") return withoutOil(scaled, state.prices)
     if (slot === "lunch" && day.snack === "snack-banana") return withExtraOil(scaled, 5, state.prices)
     return scaled
   }

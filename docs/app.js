@@ -249,7 +249,14 @@
   }
 
   function getCache() {
-    const key = JSON.stringify({ t: state.targets, s: state.shares, p: state.prices, m: state.customMeals })
+    const key = JSON.stringify({
+      t: state.targets,
+      s: state.shares,
+      p: state.prices,
+      m: state.customMeals,
+      h: state.hiddenMeals,
+      e: state.mealEdits,
+    })
     if (key !== cacheKey) {
       cacheKey = key
       scaledCache = P.scalePlan(state)
@@ -307,7 +314,7 @@
   }
 
   function assign(day, slot, mealId) {
-    const meal = P.mealById(mealId, state.customMeals)
+    const meal = P.mealById(mealId, state)
     if (!meal || meal.slot !== slot) return
     state.weeks[state.activeWeek][day][slot] = mealId
     picker = null
@@ -412,9 +419,7 @@
           const m = itemMacros(item)
           return (
             "<li><span class=\"food\">" +
-            esc(P.formatAmount(item)) +
-            " " +
-            esc(P.FOODS[item.food].name) +
+            esc(P.formatLine(item)) +
             "</span> <span class=\"muted\">(" +
             macroLine(m) +
             ")</span></li>"
@@ -498,10 +503,10 @@
     const slot = picker.slot
     const pickedDay = state.weeks[state.activeWeek][picker.day]
     const current = pickedDay[slot]
-    const options = P.mealsFor(slot, state.customMeals)
+    const options = P.mealsFor(slot, state)
       .map((meal) => {
         const scaled = P.mealOnDay(state, cache, Object.assign({}, pickedDay, { [slot]: meal.id }), slot)
-        const bits = scaled.items.map((item) => P.formatAmount(item) + " " + P.FOODS[item.food].name).join(" · ")
+        const bits = scaled.items.map((item) => P.formatLine(item)).join(" · ")
         return (
           '<button type="button" class="meal-pick' +
           (meal.id === current ? " on" : "") +
@@ -633,7 +638,9 @@
       chips +
       '</div><p class="hint">Pick the foods. Grams are calculated for ' +
       P.SLOT_LABEL[slot].toLowerCase() +
-      '. Up to 8 foods.</p><div class="action-row"><button type="button" class="solid" data-save-meal="1">Add meal</button><button type="button" class="ghost" data-cancel-meal="1">Cancel</button></div></div>'
+      '. Up to 8 foods.</p><div class="action-row"><button type="button" class="solid" data-save-meal="1">' +
+      (mealDraft.id ? "Save meal" : "Add meal") +
+      '</button><button type="button" class="ghost" data-cancel-meal="1">Cancel</button></div></div>'
     )
   }
 
@@ -653,6 +660,21 @@
     let name = mealDraft.name.trim()
     if (!name) name = foods.map((id) => P.FOODS[id].name).join(", ")
     name = name.slice(0, 60)
+    if (mealDraft.id) {
+      const builtin = P.MEALS.find((meal) => meal.id === mealDraft.id)
+      if (builtin) {
+        const edits = Object.assign({}, state.mealEdits || {})
+        const same = name === builtin.name && foods.join("\0") === P.recipeFoods(builtin).join("\0")
+        if (same) delete edits[builtin.id]
+        else edits[builtin.id] = { name, foods }
+        state.mealEdits = edits
+      } else {
+        state.customMeals = (state.customMeals || []).map((meal) => (meal.id === mealDraft.id ? { id: meal.id, slot: meal.slot, name, foods } : meal))
+      }
+      mealDraft = null
+      commit()
+      return
+    }
     const taken = new Set((state.customMeals || []).map((meal) => meal.id).concat(P.MEALS.map((meal) => meal.id)))
     let id = "c" + Math.random().toString(36).slice(2, 10)
     while (taken.has(id)) id = "c" + Math.random().toString(36).slice(2, 10)
@@ -663,7 +685,7 @@
 
   function renderMeals(cache) {
     const groups = P.SLOTS.map((slot) => {
-      const cards = P.mealsFor(slot, state.customMeals)
+      const cards = P.mealsFor(slot, state)
         .map((meal) => {
           const scaled = cache[meal.id]
           const items = scaled.items
@@ -671,18 +693,23 @@
               const m = itemMacros(item)
               return (
                 "<li><span class=\"food\">" +
-                esc(P.formatAmount(item)) +
-                " " +
-                esc(P.FOODS[item.food].name) +
+                esc(P.formatLine(item)) +
                 "</span> <span class=\"muted\">(" +
                 macroLine(m) +
                 ")</span></li>"
               )
             })
             .join("")
-          const remove = Array.isArray(meal.foods)
-            ? '<button type="button" class="ghost meal-remove" data-remove-meal="' + esc(meal.id) + '">Remove</button>'
-            : ""
+          const builtin = P.MEALS.some((item) => item.id === meal.id)
+          const edited = builtin && state.mealEdits && state.mealEdits[meal.id]
+          const actions =
+            '<div class="meal-actions"><button type="button" class="ghost" data-edit-meal="' +
+            esc(meal.id) +
+            '">Edit</button><button type="button" class="ghost" data-remove-meal="' +
+            esc(meal.id) +
+            '">Remove</button>' +
+            (edited ? '<button type="button" class="ghost" data-restore-meal="' + esc(meal.id) + '">Restore</button>' : "") +
+            "</div>"
           return (
             '<article class="meal-card"><h4>' +
             esc(meal.name) +
@@ -693,10 +720,18 @@
             '</p><ul class="ingredients">' +
             items +
             "</ul>" +
-            remove +
+            actions +
             "</article>"
           )
         })
+        .join("")
+      const removed = (state.hiddenMeals || [])
+        .map((id) => P.MEALS.find((meal) => meal.id === id))
+        .filter((meal) => meal && meal.slot === slot)
+        .map(
+          (meal) =>
+            '<button type="button" class="ghost" data-restore-hidden="' + esc(meal.id) + '">' + esc(meal.name) + "</button>",
+        )
         .join("")
       return (
         '<section class="meal-group"><h3>' +
@@ -704,6 +739,7 @@
         '</h3><div class="meal-grid">' +
         cards +
         "</div>" +
+        (removed ? '<p class="removed-row">Removed ' + removed + "</p>" : "") +
         mealForm(slot) +
         "</section>"
       )
@@ -885,6 +921,31 @@
       if (nameInput) nameInput.focus()
       return
     }
+    const editMeal = event.target.closest("[data-edit-meal]")
+    if (editMeal) {
+      const meal = P.mealById(editMeal.dataset.editMeal, state)
+      if (!meal) return
+      mealDraft = { slot: meal.slot, id: meal.id, name: meal.name, foods: P.recipeFoods(meal) }
+      render()
+      const nameInput = document.querySelector("[data-meal-name]")
+      if (nameInput) nameInput.focus()
+      return
+    }
+    const restoreMeal = event.target.closest("[data-restore-meal]")
+    if (restoreMeal) {
+      const edits = Object.assign({}, state.mealEdits || {})
+      delete edits[restoreMeal.dataset.restoreMeal]
+      state.mealEdits = edits
+      if (mealDraft && mealDraft.id === restoreMeal.dataset.restoreMeal) mealDraft = null
+      commit()
+      return
+    }
+    const restoreHidden = event.target.closest("[data-restore-hidden]")
+    if (restoreHidden) {
+      state.hiddenMeals = (state.hiddenMeals || []).filter((id) => id !== restoreHidden.dataset.restoreHidden)
+      commit()
+      return
+    }
     const foodToggle = event.target.closest("[data-food-toggle]")
     if (foodToggle && mealDraft) {
       readDraftName()
@@ -908,9 +969,22 @@
     const removeMeal = event.target.closest("[data-remove-meal]")
     if (removeMeal) {
       const id = removeMeal.dataset.removeMeal
-      const meal = P.mealById(id, state.customMeals)
-      if (meal && window.confirm("Remove " + meal.name + "?")) {
-        state.customMeals = (state.customMeals || []).filter((item) => item.id !== id)
+      const meal = P.mealById(id, state)
+      if (!meal) return
+      if (P.mealsFor(meal.slot, state).length <= 1) {
+        flash("Keep at least one " + P.SLOT_LABEL[meal.slot].toLowerCase() + ".")
+        return
+      }
+      if (window.confirm("Remove " + meal.name + "?")) {
+        if (P.MEALS.some((item) => item.id === id)) {
+          state.hiddenMeals = (state.hiddenMeals || []).concat(id)
+          const edits = Object.assign({}, state.mealEdits || {})
+          delete edits[id]
+          state.mealEdits = edits
+        } else {
+          state.customMeals = (state.customMeals || []).filter((item) => item.id !== id)
+        }
+        if (mealDraft && mealDraft.id === id) mealDraft = null
         commit()
       }
       return

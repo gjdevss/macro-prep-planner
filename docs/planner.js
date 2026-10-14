@@ -121,7 +121,7 @@
     ]),
     meal("snack-apple", "snack", "Cottage cheese and apple", "No cooking.", [
       part("cottage", "protein"),
-      carb("apple", 180),
+      fixed("apple", 180),
     ]),
     meal("snack-berries", "snack", "Cottage cheese and berries", "No cooking.", [
       part("cottage", "protein"),
@@ -129,13 +129,13 @@
     ]),
     meal("snack-banana", "snack", "Yogurt, banana, and walnuts", "No cooking.", [
       part("yogurt", "protein"),
-      carb("banana", 120),
+      fixed("banana", 120),
       fixed("walnuts", 10),
     ]),
     meal("snack-fruit", "snack", "Cottage cheese, apple, berries", "No cooking.", [
       part("cottage", "protein"),
-      carb("apple", 120),
-      carb("berries", 80),
+      fixed("apple", 180),
+      fixed("berries", 40),
     ]),
   ]
 
@@ -382,10 +382,23 @@
     return (pricePer100(food, prices) / 100) * item.amount
   }
 
+  const WHOLE_FRUIT = { banana: 120, apple: 180 }
+
   function listedBounds(food) {
     if (food.piece) return { step: 1, min: 1, max: food.id === "egg" ? 6 : 8 }
+    if (WHOLE_FRUIT[food.id]) {
+      const one = WHOLE_FRUIT[food.id]
+      return { step: one, min: one, max: one * 3 }
+    }
     if (food.id === "oil") return { step: 5, min: 5, max: 80 }
     return { step: 10, min: 10, max: 1200 }
+  }
+
+  /* Eggs stop at six and sardines are one can, so the solver was filling the
+     plate with vegetables and dropping the potato. Keep a real potato and a side. */
+  function plateBounds(meal) {
+    if (meal.id === "dinner-eggs" || meal.id === "dinner-sardines") return { carbMin: 300, microMax: { mixedveg: 150 } }
+    return null
   }
 
   function listedScore(foods, amounts, target) {
@@ -393,6 +406,7 @@
       macrosOf(foods.map((food, i) => ({ food: food.id, amount: amounts[i] }))),
       target,
       false,
+      foods.some((food) => WHOLE_FRUIT[food.id]),
     )
   }
 
@@ -442,6 +456,7 @@
 
   function scaleMeal(mealId, target, prices, customMeals) {
     const meal = mealById(mealId, customMeals)
+    if (!meal) return null
     if (Array.isArray(meal.foods)) return scaleListed(meal, target, prices)
     const countPart = meal.parts.find((p) => p.mode === "count")
     const fixedParts = meal.parts.filter((p) => p.mode === "fixed")
@@ -449,6 +464,7 @@
     const proteinParts = meal.parts.filter((p) => p.group === "protein").map((p) => ({ ...p, share: 1 }))
     const carbParts = meal.parts.filter((p) => p.group === "carb")
     const hasOil = meal.parts.some((p) => p.mode === "oil")
+    const looseEnergy = fixedParts.some((p) => WHOLE_FRUIT[p.food])
     const choices = countPart ? range(countPart.min, countPart.max) : [0]
 
     let best = null
@@ -458,12 +474,13 @@
       microParts.forEach((p) => {
         micros[p.food] = p.grams
       })
-      const solved = fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil)
+      const bounds = plateBounds(meal)
+      const solved = clampPlate(fitContinuous(target, counts, micros, fixedParts, proteinParts, carbParts, hasOil), bounds)
       const looseProtein = fixedParts.some((p) => p.food === "sardines")
-      const refined = refine(solved, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein)
+      const refined = refine(solved, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein, bounds, looseEnergy)
       const built = materialize(meal, refined, proteinParts, carbParts)
       const actual = macrosOf(built)
-      const err = errorScore(actual, target, looseProtein)
+      const err = errorScore(actual, target, looseProtein, looseEnergy)
       if (!best || err < best.err) best = { items: built, actual, err, meal }
     })
 
@@ -509,11 +526,12 @@
     return state
   }
 
-  function errorScore(actual, target, looseProtein) {
+  function errorScore(actual, target, looseProtein, looseEnergy) {
     const w = { kcal: 12, p: 16, f: 12, c: 8 }
     let s = 0
     KEYS.forEach((k) => {
       const d = (actual[k] - target[k]) / Math.max(target[k], 1)
+      if (looseEnergy && (k === "kcal" || k === "c") && d > 0) return
       let weight = w[k]
       if (k === "p" && looseProtein && d > 0) weight = 3
       s += weight * d * d
@@ -521,11 +539,20 @@
     return s
   }
 
-  function refine(state, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein) {
+  function clampPlate(state, bounds) {
+    if (!bounds) return state
+    if (bounds.carbMin && state.carb < bounds.carbMin) state.carb = bounds.carbMin
+    Object.keys(bounds.microMax || {}).forEach((id) => {
+      if (state.micros[id] != null && state.micros[id] > bounds.microMax[id]) state.micros[id] = bounds.microMax[id]
+    })
+    return state
+  }
+
+  function refine(state, target, countPart, proteinParts, carbParts, hasOil, fixedParts, looseProtein, bounds, looseEnergy) {
     let current = cloneState(state)
     for (let pass = 0; pass < 80; pass++) {
       let best = current
-      let bestScore = scoreState(current, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein)
+      let bestScore = scoreState(current, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein, looseEnergy)
       const moves = []
       moves.push({ protein: current.protein - 10 }, { protein: current.protein + 10 })
       moves.push({ carb: current.carb - 10 }, { carb: current.carb + 10 })
@@ -539,9 +566,9 @@
         moves.push({ count: current.counts[countPart.food] + 1 })
       }
       moves.forEach((move) => {
-        const next = applyMove(current, move, countPart)
+        const next = applyMove(current, move, countPart, bounds)
         if (!next) return
-        const s = scoreState(next, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein)
+        const s = scoreState(next, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein, looseEnergy)
         if (s < bestScore - 1e-9) {
           best = next
           bestScore = s
@@ -563,14 +590,15 @@
     }
   }
 
-  function applyMove(state, move, countPart) {
+  function applyMove(state, move, countPart, bounds) {
     const next = cloneState(state)
     if (move.protein != null) {
       if (move.protein < 0) return null
       next.protein = move.protein
     }
     if (move.carb != null) {
-      if (move.carb < 0) return null
+      const carbMin = (bounds && bounds.carbMin) || 0
+      if (move.carb < carbMin) return null
       next.carb = move.carb
     }
     if (move.oil != null) {
@@ -579,6 +607,8 @@
     }
     if (move.micro) {
       if (move.grams < 40) return null
+      const cap = bounds && bounds.microMax && bounds.microMax[move.micro]
+      if (cap != null && move.grams > cap) return null
       next.micros[move.micro] = move.grams
     }
     if (move.count != null) {
@@ -588,11 +618,12 @@
     return next
   }
 
-  function scoreState(state, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein) {
+  function scoreState(state, target, proteinParts, carbParts, hasOil, fixedParts, looseProtein, looseEnergy) {
     return errorScore(
       macrosOf(itemsFromState(state, proteinParts, carbParts, hasOil, fixedParts)),
       target,
       looseProtein,
+      looseEnergy,
     )
   }
 
@@ -665,25 +696,73 @@
       shops: {},
       shopList: [],
       customMeals: [],
+      hiddenMeals: [],
+      mealEdits: {},
     }
   }
 
-  function mealById(id, customMeals) {
-    return MEALS.find((m) => m.id === id) || (customMeals || []).find((m) => m.id === id) || null
+  function recipeFoods(meal) {
+    if (!meal) return []
+    if (Array.isArray(meal.foods)) return meal.foods.slice()
+    const foods = []
+    const seen = new Set()
+    ;(meal.parts || []).forEach((part) => {
+      if (!part.food || seen.has(part.food)) return
+      seen.add(part.food)
+      foods.push(part.food)
+    })
+    return foods
   }
 
-  function mealsFor(slot, customMeals) {
-    return MEALS.filter((m) => m.slot === slot).concat((customMeals || []).filter((m) => m.slot === slot))
+  function sameFoods(a, b) {
+    return a.length === b.length && a.every((id, i) => id === b[i])
+  }
+
+  function mealContext(arg) {
+    if (Array.isArray(arg)) return { customMeals: arg, hiddenMeals: [], mealEdits: {} }
+    const state = arg || {}
+    return {
+      customMeals: state.customMeals || [],
+      hiddenMeals: state.hiddenMeals || [],
+      mealEdits: state.mealEdits || {},
+    }
+  }
+
+  function applyEdit(meal, edits) {
+    const edit = edits && edits[meal.id]
+    if (!edit) return meal
+    const foods = edit.foods || []
+    const original = recipeFoods(meal)
+    if (sameFoods(foods, original)) {
+      if (edit.name === meal.name) return meal
+      return Object.assign({}, meal, { name: edit.name })
+    }
+    return { id: meal.id, slot: meal.slot, name: edit.name, foods: foods.slice(), prep: meal.prep }
+  }
+
+  function mealById(id, arg) {
+    const ctx = mealContext(arg)
+    if (ctx.hiddenMeals.indexOf(id) >= 0) return null
+    const builtin = MEALS.find((m) => m.id === id)
+    if (builtin) return applyEdit(builtin, ctx.mealEdits)
+    return ctx.customMeals.find((m) => m.id === id) || null
+  }
+
+  function mealsFor(slot, arg) {
+    const ctx = mealContext(arg)
+    const hidden = new Set(ctx.hiddenMeals)
+    return MEALS.filter((m) => m.slot === slot && !hidden.has(m.id))
+      .map((m) => applyEdit(m, ctx.mealEdits))
+      .concat(ctx.customMeals.filter((m) => m.slot === slot))
   }
 
   function scalePlan(state) {
     const shares = normalizeShares(state.shares)
-    const custom = state.customMeals || []
     const cache = {}
     SLOTS.forEach((slot) => {
       const target = slotTarget(state.targets, shares, slot)
-      mealsFor(slot, custom).forEach((m) => {
-        cache[m.id] = scaleMeal(m.id, target, state.prices, custom)
+      mealsFor(slot, state).forEach((m) => {
+        cache[m.id] = scaleMeal(m.id, target, state.prices, state)
       })
     })
     return cache
@@ -875,6 +954,16 @@
     return "$" + n.toFixed(2)
   }
 
+  function formatLine(item) {
+    const food = FOODS[item.food]
+    if (food.piece) {
+      const n = item.amount
+      const word = food.name.toLowerCase()
+      return n + " " + (n === 1 ? word : word + "s")
+    }
+    return formatAmount(item) + " " + food.name
+  }
+
   function formatAmount(item) {
     const food = FOODS[item.food]
     if (food.piece) {
@@ -882,6 +971,12 @@
       return n + (n === 1 ? " egg" : " eggs")
     }
     if (item.food === "sardines" && item.amount === 120) return "1 can (120 g)"
+    const whole = WHOLE_FRUIT[item.food]
+    if (whole && item.amount >= whole && item.amount % whole === 0) {
+      const n = item.amount / whole
+      const word = item.food === "banana" ? "banana" : "apple"
+      return n + " " + (n === 1 ? word : word + "s") + " (" + item.amount + " g)"
+    }
     return item.amount + " g"
   }
 
@@ -908,6 +1003,45 @@
     return meals.slice(0, 24)
   }
 
+  function cleanHiddenMeals(list) {
+    const ids = []
+    const seen = new Set()
+    if (!Array.isArray(list)) return ids
+    list.forEach((id) => {
+      const key = String(id || "")
+      if (!MEALS.some((meal) => meal.id === key) || seen.has(key)) return
+      seen.add(key)
+      ids.push(key)
+    })
+    return ids
+  }
+
+  function cleanFoodList(list) {
+    const foods = []
+    const seen = new Set()
+    ;(Array.isArray(list) ? list : []).forEach((foodId) => {
+      if (!FOODS[foodId] || seen.has(foodId)) return
+      seen.add(foodId)
+      foods.push(foodId)
+    })
+    return foods.slice(0, 8)
+  }
+
+  function cleanMealEdits(edits) {
+    const next = {}
+    if (!edits || typeof edits !== "object") return next
+    MEALS.forEach((meal) => {
+      const edit = edits[meal.id]
+      if (!edit || typeof edit !== "object") return
+      const name = String(edit.name || "").trim().slice(0, 60)
+      const foods = cleanFoodList(edit.foods)
+      if (!name || !foods.length) return
+      if (name === meal.name && sameFoods(foods, recipeFoods(meal))) return
+      next[meal.id] = { name, foods }
+    })
+    return next
+  }
+
   function sanitize(state) {
     const base = defaultState()
     const next = {
@@ -919,6 +1053,8 @@
       shops: cleanShops(state.shops),
       shopList: cleanShopList(state.shopList),
       customMeals: cleanCustomMeals(state.customMeals),
+      hiddenMeals: cleanHiddenMeals(state.hiddenMeals),
+      mealEdits: cleanMealEdits(state.mealEdits),
     }
     KEYS.forEach((k) => {
       const n = Number(next.targets[k])
@@ -936,8 +1072,17 @@
         const built = { breakfast: "breakfast", lunch: fb.lunch, snack: fb.snack, dinner: fb.dinner }
         SLOTS.forEach((slot) => {
           const id = day && day[slot]
-          const found = mealById(id, next.customMeals)
-          if (found && found.slot === slot) built[slot] = id
+          const found = mealById(id, next)
+          if (found && found.slot === slot) {
+            built[slot] = id
+            return
+          }
+          const options = mealsFor(slot, next)
+          if (options.length) built[slot] = options[0].id
+          else {
+            next.hiddenMeals = next.hiddenMeals.filter((hiddenId) => hiddenId !== fb[slot])
+            built[slot] = fb[slot]
+          }
         })
         return built
       })
@@ -969,6 +1114,7 @@
     defaultState,
     mealById,
     mealsFor,
+    recipeFoods,
     scalePlan,
     scaleMeal,
     dayMeals,
@@ -978,6 +1124,7 @@
     shopping,
     prep,
     formatAmount,
+    formatLine,
     money,
     pricePer100,
     packPriceOf,

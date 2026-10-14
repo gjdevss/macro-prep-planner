@@ -258,7 +258,9 @@ h1, h2, h3, h4, p { margin: 0; }
 }
 .meal-card h4 { font-size: 1.05rem; font-weight: 550; }
 .add-meal { margin-top: 0.7rem; }
-.meal-remove { margin-top: 0.55rem; }
+.meal-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }
+.removed-row { margin-top: 0.55rem; color: var(--soft); font-size: 0.92rem; }
+.removed-row .ghost { margin-left: 0.35rem; }
 .meal-draft {
   margin-top: 0.7rem;
   background: #fff;

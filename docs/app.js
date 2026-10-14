@@ -1,0 +1,735 @@
+/* Plate. The plan stays in this browser under the key plate-plan-v1. */
+(function () {
+  const P = window.Planner
+  const app = document.getElementById("app")
+
+  let state = P.load()
+  let view = "plan"
+  let dayIndex = 0
+  let shopScope = "month"
+  let picker = null
+  let notice = ""
+  let importText = ""
+  let cacheKey = ""
+  let scaledCache = null
+
+  function esc(value) {
+    return String(value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[ch]))
+  }
+
+  function round0(n) {
+    return Math.round(n).toLocaleString("en-US")
+  }
+
+  function grams(n) {
+    return round0(n) + " g"
+  }
+
+  function commit() {
+    state = P.sanitize(state)
+    P.save(state)
+    cacheKey = ""
+    render()
+  }
+
+  function getCache() {
+    const key = JSON.stringify({ t: state.targets, s: state.shares, p: state.prices })
+    if (key !== cacheKey) {
+      cacheKey = key
+      scaledCache = P.scalePlan(state)
+    }
+    return scaledCache
+  }
+
+  function itemMacros(item) {
+    const food = P.FOODS[item.food]
+    if (food.piece) {
+      return {
+        kcal: food.each.kcal * item.amount,
+        p: food.each.p * item.amount,
+        f: food.each.f * item.amount,
+        c: food.each.c * item.amount,
+      }
+    }
+    const m = item.amount / 100
+    return {
+      kcal: food.per100.kcal * m,
+      p: food.per100.p * m,
+      f: food.per100.f * m,
+      c: food.per100.c * m,
+    }
+  }
+
+  function macroLine(m) {
+    return round0(m.kcal) + " kcal, " + round0(m.p) + " P, " + round0(m.f) + " F, " + round0(m.c) + " C"
+  }
+
+  function usedLabel(line) {
+    if (line.id === "egg") return line.amount + (line.amount === 1 ? " egg" : " eggs")
+    if (line.id === "sardines") {
+      const cans = Math.round(line.amount / 120)
+      return cans + (cans === 1 ? " can" : " cans")
+    }
+    return grams(line.amount)
+  }
+
+  function buyLabel(line) {
+    const n = line.packs
+    const unit = line.packLabel
+    return "Buy " + n + " " + unit
+  }
+
+  function flash(text) {
+    notice = text
+    render()
+    window.setTimeout(() => {
+      if (notice === text) {
+        notice = ""
+        render()
+      }
+    }, 3500)
+  }
+
+  function assign(day, slot, mealId) {
+    const meal = P.mealById(mealId)
+    if (!meal || meal.slot !== slot) return
+    state.weeks[state.activeWeek][day][slot] = mealId
+    picker = null
+    commit()
+  }
+
+  function render() {
+    const cache = getCache()
+    const monthCost = monthBuy(cache)
+    app.innerHTML =
+      '<div class="app">' +
+      shell(monthCost) +
+      (view === "plan" ? renderPlan(cache) : "") +
+      (view === "month" ? renderMonth(cache) : "") +
+      (view === "shop" ? renderShop(cache) : "") +
+      (view === "prep" ? renderPrep(cache) : "") +
+      (view === "targets" ? renderTargets() : "") +
+      (picker ? renderPicker(cache) : "") +
+      (notice ? '<div class="toast">' + esc(notice) + "</div>" : "") +
+      '<p class="foot">Saved in this browser. GitHub does not receive what you type. Copy the plan if you want the same week on your phone and your computer.</p></div>'
+  }
+
+  function shell(monthCost) {
+    const tabs = [
+      ["plan", "Plan"],
+      ["month", "Month"],
+      ["shop", "Shop"],
+      ["prep", "Prep"],
+      ["targets", "Targets"],
+    ]
+    const buttons = tabs
+      .map(([id, label]) => '<button type="button" data-view="' + id + '" class="' + (view === id ? "on" : "") + '">' + label + "</button>")
+      .join("")
+    return (
+      '<header class="top">' +
+      '<div class="brand"><h1>Pl<span>a</span>te</h1><p>Raw weights. Same calories when you swap a meal.</p></div>' +
+      '<div class="top-side"><div class="cost-pill"><strong>' +
+      P.money(monthCost) +
+      '</strong><span>this month, to buy</span></div>' +
+      '<button type="button" class="ghost" data-view="targets">Targets</button></div></header>' +
+      '<nav class="nav-top">' +
+      buttons +
+      "</nav>" +
+      '<nav class="nav-bottom">' +
+      buttons +
+      "</nav>"
+    )
+  }
+
+  function renderPlan(cache) {
+    const week = state.weeks[state.activeWeek]
+    const day = week[dayIndex]
+    const meals = P.dayMeals(state, cache, day)
+    const totals = P.sumMacros(meals)
+    const dayCost = P.sumCost(meals)
+    const kcalOff = Math.abs(totals.kcal - state.targets.kcal)
+    const weeks = [0, 1, 2, 3]
+      .map((i) => '<button type="button" class="week-btn' + (i === state.activeWeek ? " on" : "") + '" data-week="' + i + '">Week ' + (i + 1) + "</button>")
+      .join("")
+    const board = week
+      .map((d, i) => {
+        const t = P.sumMacros(P.dayMeals(state, cache, d))
+        const slots = P.SLOTS.map((slot) => {
+          const scaled = cache[d[slot]]
+          return (
+            '<button type="button" class="mini" data-day="' +
+            i +
+            '" data-open-slot="' +
+            slot +
+            '" data-drop-day="' +
+            i +
+            '" data-drop-slot="' +
+            slot +
+            '"><small>' +
+            P.SLOT_LABEL[slot] +
+            "</small><b>" +
+            esc(scaled.meal.name) +
+            "</b></button>"
+          )
+        }).join("")
+        return (
+          '<article class="day-col' +
+          (i === dayIndex ? " on" : "") +
+          '"><button type="button" class="day-head" data-day="' +
+          i +
+          '"><span class="dow">' +
+          P.DAYS[i].slice(0, 3) +
+          '</span><span class="kcal">' +
+          round0(t.kcal) +
+          " kcal</span></button>" +
+          slots +
+          "</article>"
+        )
+      })
+      .join("")
+    const blocks = P.SLOTS.map((slot) => {
+      const scaled = cache[day[slot]]
+      const items = scaled.items
+        .map((item) => {
+          const m = itemMacros(item)
+          return (
+            "<li><span class=\"food\">" +
+            esc(P.formatAmount(item)) +
+            " " +
+            esc(P.FOODS[item.food].name) +
+            "</span> <span class=\"muted\">(" +
+            macroLine(m) +
+            ")</span></li>"
+          )
+        })
+        .join("")
+      return (
+        '<section class="slot-block"><button type="button" class="slot-hit" data-open-slot="' +
+        slot +
+        '" data-drop-day="' +
+        dayIndex +
+        '" data-drop-slot="' +
+        slot +
+        '"><span><em>' +
+        P.SLOT_LABEL[slot] +
+        "</em><strong>" +
+        esc(scaled.meal.name) +
+        "</strong><span class=\"macros\">" +
+        macroLine(scaled.actual) +
+        " · " +
+        P.money(scaled.cost) +
+        '</span></span><span class="swap">Change</span></button><ul class="ingredients">' +
+        items +
+        "</ul></section>"
+      )
+    }).join("")
+    const banner =
+      kcalOff > 100
+        ? '<p class="note">This day is ' +
+          round0(totals.kcal) +
+          " kcal. The target is " +
+          round0(state.targets.kcal) +
+          ". Ten gram steps" +
+          (day.dinner === "dinner-sardines" ? " and a whole can of sardines" : "") +
+          " move the total. The number here is the real plate.</p>"
+        : '<p class="ok-note">Breakfast, then train, then lunch. The snack is optional. Dinner closes the day.</p>'
+    return (
+      '<div class="week-row">' +
+      weeks +
+      "</div>" +
+      '<div class="day-switch">' +
+      P.DAYS.map(
+        (name, i) =>
+          '<button type="button" class="day-chip' +
+          (i === dayIndex ? " on" : "") +
+          '" data-day="' +
+          i +
+          '">' +
+          name.slice(0, 3) +
+          "</button>",
+      ).join("") +
+      "</div>" +
+      '<div class="board">' +
+      board +
+      "</div>" +
+      '<section class="panel"><div class="panel-head"><div><h2>' +
+      P.DAYS[dayIndex] +
+      "</h2><p class=\"muted\">Week " +
+      (state.activeWeek + 1) +
+      " · " +
+      P.money(dayCost) +
+      " of food</p></div></div>" +
+      '<div class="totals">' +
+      stat(round0(totals.kcal), "kcal", Math.abs(totals.kcal - state.targets.kcal) > 100) +
+      stat(round0(totals.p) + " g", "protein", Math.abs(totals.p - state.targets.p) > 12) +
+      stat(round0(totals.f) + " g", "fat", Math.abs(totals.f - state.targets.f) > 8) +
+      stat(round0(totals.c) + " g", "carbs", Math.abs(totals.c - state.targets.c) > 25) +
+      stat(round0(totals.fiber) + " g", "fiber", false) +
+      "</div>" +
+      banner +
+      blocks +
+      '<p class="hint">Weights are raw. Chicken shrinks to about three quarters. Dry rice about triples. On a computer you can drag a meal onto a day. On a phone, tap the meal, then tap the one you want.</p></section>'
+    )
+  }
+
+  function stat(value, label, off) {
+    return '<div class="stat' + (off ? " off" : "") + '"><b>' + value + "</b><span>" + label + "</span></div>"
+  }
+
+  function renderPicker(cache) {
+    const slot = picker.slot
+    const current = state.weeks[state.activeWeek][picker.day][slot]
+    const options = P.mealsFor(slot)
+      .map((meal) => {
+        const scaled = cache[meal.id]
+        const bits = scaled.items.map((item) => P.formatAmount(item) + " " + P.FOODS[item.food].name).join(" · ")
+        return (
+          '<button type="button" class="meal-pick' +
+          (meal.id === current ? " on" : "") +
+          '" draggable="true" data-drag-meal="' +
+          meal.id +
+          '" data-pick-meal="' +
+          meal.id +
+          '"><b>' +
+          esc(meal.name) +
+          "</b><span class=\"macros\">" +
+          macroLine(scaled.actual) +
+          " · " +
+          P.money(scaled.cost) +
+          "</span><span class=\"hint\">" +
+          esc(bits) +
+          "</span></button>"
+        )
+      })
+      .join("")
+    const only = options.length === 1 ? '<p class="hint">Breakfast is this shake every morning. Change the day targets and the grams change with them.</p>' : ""
+    return (
+      '<div class="sheet-back" data-close="1"><div class="sheet" role="dialog" aria-label="Choose a meal"><h3>' +
+      P.DAYS[picker.day] +
+      " " +
+      P.SLOT_LABEL[slot].toLowerCase() +
+      "</h3>" +
+      only +
+      options +
+      '<div class="action-row" style="margin-top:0.8rem"><button type="button" class="ghost" data-close="1">Close</button></div></div></div>'
+    )
+  }
+
+  function renderMonth(cache) {
+    const cards = state.weeks
+      .map((week, wi) => {
+        const days = week
+          .map((day, di) => {
+            const lunch = cache[day.lunch]
+            const dinner = cache[day.dinner]
+            return (
+              '<div class="mini-day"><b>' +
+              P.DAYS[di].slice(0, 3) +
+              "</b>" +
+              esc(lunch.meal.name) +
+              "<br>" +
+              esc(dinner.meal.name) +
+              "</div>"
+            )
+          })
+          .join("")
+        const cost = weekBuy(cache, wi)
+        return (
+          '<article class="week-card' +
+          (wi === state.activeWeek ? " on" : "") +
+          '"><div class="panel-head"><div><h3>Week ' +
+          (wi + 1) +
+          '</h3><p class="muted">' +
+          P.money(cost) +
+          ' to buy</p></div><button type="button" class="solid" data-open-week="' +
+          wi +
+          '">Open</button></div><div class="mini-days">' +
+          days +
+          "</div></article>"
+        )
+      })
+      .join("")
+    return (
+      '<section class="panel"><div class="panel-head"><div><h2>Four weeks</h2><p class="muted">The month starts as the same rotation four times. Change a week, then copy it if you want the shopping list to match.</p></div></div>' +
+      '<div class="action-row"><button type="button" class="solid" data-copy-week="1">Copy week ' +
+      (state.activeWeek + 1) +
+      " across the month</button></div></section>" +
+      '<div class="month" style="margin-top:0.8rem">' +
+      cards +
+      "</div>"
+    )
+  }
+
+  function weekIndexes() {
+    return shopScope === "month" ? [0, 1, 2, 3] : [state.activeWeek]
+  }
+
+  function buyCost(line) {
+    return line.packs * line.packPrice
+  }
+
+  function weekBuy(cache, weekIndex) {
+    return P.shopping(state, cache, [weekIndex]).reduce(
+      (sum, store) => sum + store.lines.reduce((s, line) => s + buyCost(line), 0),
+      0,
+    )
+  }
+
+  function rangeBuy(cache, indexes) {
+    return P.shopping(state, cache, indexes).reduce(
+      (sum, store) => sum + store.lines.reduce((s, line) => s + buyCost(line), 0),
+      0,
+    )
+  }
+
+  function monthBuy(cache) {
+    return rangeBuy(cache, [0, 1, 2, 3])
+  }
+
+  function renderShop(cache) {
+    const groups = P.shopping(state, cache, weekIndexes())
+    const total = groups.reduce((sum, store) => sum + store.lines.reduce((s, line) => s + buyCost(line), 0), 0)
+    const stores = groups
+      .map((store) => {
+        const sub = store.lines.reduce((s, line) => s + buyCost(line), 0)
+        const lines = store.lines
+          .map((line) => {
+            const food = P.FOODS[line.id]
+            return (
+              '<div class="line"><div><strong>' +
+              esc(line.name) +
+              '</strong><div class="buy">Use ' +
+              esc(usedLabel(line)) +
+              " · " +
+              esc(buyLabel(line)) +
+              '</div></div><label class="price">Pack price<input inputmode="decimal" data-price="' +
+              line.id +
+              '" value="' +
+              line.packPrice.toFixed(2) +
+              '" aria-label="' +
+              esc(line.name) +
+              ' pack price"></label><div class="money">' +
+              P.money(buyCost(line)) +
+              "<div class=\"buy\">per " +
+              esc(food.packLabel) +
+              "</div></div></div>"
+            )
+          })
+          .join("")
+        return '<section class="store"><h3>' + esc(store.store) + " · " + P.money(sub) + "</h3>" + lines + "</section>"
+      })
+      .join("")
+    return (
+      '<section class="panel"><div class="grand"><div><h2>Shopping</h2><p class="muted">October 2026 shelf guesses for Costco and Trader Joe\'s. Change a price and this browser keeps it. There is no live price feed.</p></div><strong>' +
+      P.money(total) +
+      "</strong></div>" +
+      '<div class="scope-row"><button type="button" class="scope' +
+      (shopScope === "week" ? " on" : "") +
+      '" data-shop="week">This week</button><button type="button" class="scope' +
+      (shopScope === "month" ? " on" : "") +
+      '" data-shop="month">This month</button></div>' +
+      stores +
+      '<p class="hint">Buy counts are packs rounded up. The dollar figure is those packs, so it sits a little above the food you will actually eat. Chicken at Trader Joe\'s instead of Costco is the expensive swap. Leave receipts out of the repo.</p></section>'
+    )
+  }
+
+  function renderPrep(cache) {
+    const plan = P.prep(state, cache, state.activeWeek)
+    const steps = plan.steps
+      .map((step, i) => '<div class="step"><div class="n">' + (i + 1) + "</div><div><strong>" + esc(step.title) + "</strong><p>" + esc(step.body) + "</p></div></div>")
+      .join("")
+    const tools = plan.tools.map((tool) => "<span>" + esc(tool) + "</span>").join("")
+    const menu = plan.days
+      .map(
+        (day) =>
+          '<span class="menu-chip"><b>' +
+          day.name.slice(0, 3) +
+          "</b> " +
+          esc(day.meals.map((m) => m.name).join(" · ")) +
+          "</span>",
+      )
+      .join("")
+    return (
+      '<section class="panel"><div class="panel-head"><div><h2>Sunday cook</h2><p class="muted">Week ' +
+      (state.activeWeek + 1) +
+      ". Oven, one pot, a pan if there is beef. A slow cooker is optional and unused here.</p></div></div>" +
+      '<div class="tools">' +
+      tools +
+      "</div>" +
+      '<p class="hint">' +
+      esc(plan.boxes) +
+      " Shared fridge: one shelf corner for the fresh boxes, one freezer corner for the rest. If the freezer is full, cook Sunday and again Wednesday.</p>" +
+      steps +
+      '<p class="hint">Use iodized salt. In a New York winter, a vitamin D pill is separate from the food. Cool the rice within two hours. Fridge life is 3 or 4 days, then the freezer.</p>' +
+      '<div class="tools" style="margin-top:0.8rem">' +
+      menu +
+      "</div></section>"
+    )
+  }
+
+  function renderTargets() {
+    const t = state.targets
+    const fields = [
+      ["kcal", "Calories", t.kcal],
+      ["p", "Protein, g", t.p],
+      ["f", "Fat, g", t.f],
+      ["c", "Carbs, g", t.c],
+    ]
+      .map(
+        ([key, label, value]) =>
+          '<label>' +
+          label +
+          '<input inputmode="decimal" data-target="' +
+          key +
+          '" value="' +
+          value +
+          '"></label>',
+      )
+      .join("")
+    const used = P.normalizeShares(state.shares)
+    const rows = P.SLOTS.map((slot) => {
+      const cells = ["kcal", "p", "f", "c"]
+        .map((key) => {
+          const shown = Math.round(state.shares[slot][key] * 1000) / 10
+          return '<td><input inputmode="decimal" data-share="' + slot + '" data-key="' + key + '" value="' + shown + '"></td>'
+        })
+        .join("")
+      return "<tr><th>" + P.SLOT_LABEL[slot] + "</th>" + cells + "</tr>"
+    }).join("")
+    const sums = ["kcal", "p", "f", "c"]
+      .map((key) => {
+        const sum = P.SLOTS.reduce((s, slot) => s + Number(state.shares[slot][key] || 0), 0)
+        return Math.round(sum * 100)
+      })
+      .join(" / ")
+    const usedLine = P.SLOTS.map((slot) => {
+      return (
+        P.SLOT_LABEL[slot] +
+        " " +
+        Math.round(used[slot].kcal * 100) +
+        "/" +
+        Math.round(used[slot].p * 100) +
+        "/" +
+        Math.round(used[slot].f * 100) +
+        "/" +
+        Math.round(used[slot].c * 100)
+      )
+    }).join(" · ")
+    return (
+      '<section class="panel"><h2>Day targets</h2><p class="muted" style="margin:0.35rem 0 0.8rem">These four numbers resize every meal. They do not change which foods are in the meal. Changing calories scales protein, fat, and carbs with it. Change those three on their own when you want a different shape. 2,500 kcal, 180 g protein, 65 g fat, and 315 g carbs is the plate this was built around.</p>' +
+      '<div class="targets">' +
+      fields +
+      "</div>" +
+      '<details><summary>How the day is split</summary><p class="hint">Each number is a percent of the day. Columns are calories, protein, fat, carbs. Lunch holds the protein because you train before it. Dinner holds more of the fat. Typed sums: ' +
+      sums +
+      '.</p><table class="shares"><thead><tr><th></th><th>Kcal</th><th>Protein</th><th>Fat</th><th>Carbs</th></tr></thead><tbody>' +
+      rows +
+      "</tbody></table><p class=\"hint\">Used as " +
+      esc(usedLine) +
+      '.</p><button type="button" class="ghost" data-normalize="1">Make each column add to 100</button></details>' +
+      '<div class="file-box"><h3 style="font-family:var(--serif);font-weight:560">Keep this plan</h3><p class="muted">Closing the page does not clear it. The memory belongs to this browser on this device. Private GitHub does not hide the page, and it also does not store your edits. People with the link can see the default meals. They cannot see a plan you have not pasted into the repo.</p>' +
+      '<div class="action-row"><button type="button" class="solid" data-export="1">Copy plan</button><button type="button" class="ghost" data-download="1">Download plan</button><button type="button" class="ghost" data-reset="1">Reset</button></div>' +
+      '<label>Paste a plan from the other device<textarea data-import>' +
+      esc(importText) +
+      '</textarea></label><button type="button" class="solid" data-apply-import="1">Use pasted plan</button>' +
+      '<label class="ghost" style="display:inline-flex;align-items:center">Or choose a file<input type="file" accept="application/json" data-file hidden></label></div></section>'
+    )
+  }
+
+  app.addEventListener("click", (event) => {
+    const viewBtn = event.target.closest("[data-view]")
+    if (viewBtn) {
+      view = viewBtn.dataset.view
+      picker = null
+      render()
+      return
+    }
+    if (event.target.classList.contains("sheet-back") || event.target.closest("button[data-close]")) {
+      picker = null
+      render()
+      return
+    }
+    const weekBtn = event.target.closest("[data-week]")
+    if (weekBtn) {
+      state.activeWeek = Number(weekBtn.dataset.week)
+      commit()
+      return
+    }
+    const openWeek = event.target.closest("[data-open-week]")
+    if (openWeek) {
+      state.activeWeek = Number(openWeek.dataset.openWeek)
+      view = "plan"
+      dayIndex = 0
+      commit()
+      return
+    }
+    const dayBtn = event.target.closest("[data-day]")
+    if (dayBtn && !event.target.closest("[data-open-slot]")) {
+      dayIndex = Number(dayBtn.dataset.day)
+      render()
+      return
+    }
+    const openSlot = event.target.closest("[data-open-slot]")
+    if (openSlot) {
+      const day = openSlot.dataset.day != null ? Number(openSlot.dataset.day) : dayIndex
+      dayIndex = day
+      picker = { day, slot: openSlot.dataset.openSlot }
+      render()
+      return
+    }
+    const pick = event.target.closest("[data-pick-meal]")
+    if (pick && picker) {
+      assign(picker.day, picker.slot, pick.dataset.pickMeal)
+      return
+    }
+    const shopBtn = event.target.closest("[data-shop]")
+    if (shopBtn) {
+      shopScope = shopBtn.dataset.shop
+      render()
+      return
+    }
+    if (event.target.closest("[data-copy-week]")) {
+      const src = state.weeks[state.activeWeek].map((day) => ({ ...day }))
+      state.weeks = [0, 1, 2, 3].map(() => src.map((day) => ({ ...day })))
+      commit()
+      flash("Week " + (state.activeWeek + 1) + " is now the whole month.")
+      return
+    }
+    if (event.target.closest("[data-normalize]")) {
+      state.shares = P.normalizeShares(state.shares)
+      commit()
+      return
+    }
+    if (event.target.closest("[data-reset]")) {
+      if (window.confirm("Reset meals, targets, and prices on this browser?")) {
+        state = P.defaultState()
+        importText = ""
+        commit()
+      }
+      return
+    }
+    if (event.target.closest("[data-export]")) {
+      const text = JSON.stringify(state)
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => flash("Plan copied. Paste it on the other device."),
+          () => flash("Clipboard blocked. Download the file instead."),
+        )
+      } else flash("Clipboard blocked. Download the file instead.")
+      return
+    }
+    if (event.target.closest("[data-download]")) {
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = "plate-plan.json"
+      a.click()
+      URL.revokeObjectURL(url)
+      return
+    }
+    if (event.target.closest("[data-apply-import]")) {
+      applyText(importText)
+    }
+  })
+
+  app.addEventListener("change", (event) => {
+    const target = event.target.closest("[data-target]")
+    if (target) {
+      const n = Number(target.value)
+      if (Number.isFinite(n) && n > 0) {
+        if (target.dataset.target === "kcal" && state.targets.kcal > 0) {
+          const ratio = n / state.targets.kcal
+          state.targets.p = Math.max(1, Math.round(state.targets.p * ratio))
+          state.targets.f = Math.max(1, Math.round(state.targets.f * ratio))
+          state.targets.c = Math.max(1, Math.round(state.targets.c * ratio))
+        }
+        state.targets[target.dataset.target] = n
+      }
+      commit()
+      return
+    }
+    const share = event.target.closest("[data-share]")
+    if (share) {
+      const n = Number(share.value)
+      if (Number.isFinite(n)) state.shares[share.dataset.share][share.dataset.key] = n / 100
+      commit()
+      return
+    }
+    const price = event.target.closest("[data-price]")
+    if (price) {
+      const food = P.FOODS[price.dataset.price]
+      const n = Number(price.value)
+      if (price.value.trim() === "") delete state.prices[food.id]
+      else if (Number.isFinite(n) && n >= 0) state.prices[food.id] = (n / food.packGrams) * 100
+      commit()
+      return
+    }
+    const file = event.target.closest("[data-file]")
+    if (file && file.files && file.files[0]) {
+      const reader = new FileReader()
+      reader.onload = () => applyText(String(reader.result || ""))
+      reader.readAsText(file.files[0])
+    }
+  })
+
+  app.addEventListener("input", (event) => {
+    const box = event.target.closest("[data-import]")
+    if (box) importText = box.value
+  })
+
+  app.addEventListener("dragstart", (event) => {
+    const meal = event.target.closest("[data-drag-meal]")
+    if (!meal) return
+    event.dataTransfer.setData("text/plain", meal.dataset.dragMeal)
+    event.dataTransfer.effectAllowed = "copy"
+  })
+
+  app.addEventListener("dragover", (event) => {
+    const zone = event.target.closest("[data-drop-slot]")
+    if (!zone) return
+    event.preventDefault()
+    zone.classList.add("over")
+  })
+
+  app.addEventListener("dragleave", (event) => {
+    const zone = event.target.closest("[data-drop-slot]")
+    if (zone) zone.classList.remove("over")
+  })
+
+  app.addEventListener("drop", (event) => {
+    const zone = event.target.closest("[data-drop-slot]")
+    if (!zone) return
+    event.preventDefault()
+    const mealId = event.dataTransfer.getData("text/plain")
+    assign(Number(zone.dataset.dropDay), zone.dataset.dropSlot, mealId)
+  })
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && picker) {
+      picker = null
+      render()
+    }
+  })
+
+  function applyText(text) {
+    try {
+      const parsed = JSON.parse(text)
+      state = P.sanitize(parsed)
+      importText = ""
+      view = "plan"
+      commit()
+      flash("Plan loaded on this browser.")
+    } catch (e) {
+      flash("That text is not a plan file.")
+    }
+  }
+
+  render()
+})()

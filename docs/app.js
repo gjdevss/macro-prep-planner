@@ -403,7 +403,7 @@
       })
       .join("")
     const blocks = P.SLOTS.map((slot) => {
-      const scaled = cache[day[slot]]
+      const scaled = P.mealOnDay(state, cache, day, slot)
       const items = scaled.items
         .map((item) => {
           const m = itemMacros(item)
@@ -493,10 +493,11 @@
 
   function renderPicker(cache) {
     const slot = picker.slot
-    const current = state.weeks[state.activeWeek][picker.day][slot]
+    const pickedDay = state.weeks[state.activeWeek][picker.day]
+    const current = pickedDay[slot]
     const options = P.mealsFor(slot)
       .map((meal) => {
-        const scaled = cache[meal.id]
+        const scaled = P.mealOnDay(state, cache, Object.assign({}, pickedDay, { [slot]: meal.id }), slot)
         const bits = scaled.items.map((item) => P.formatAmount(item) + " " + P.FOODS[item.food].name).join(" · ")
         return (
           '<button type="button" class="meal-pick' +

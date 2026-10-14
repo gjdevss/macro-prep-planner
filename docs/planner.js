@@ -130,7 +130,6 @@
     meal("snack-banana", "snack", "Yogurt and banana", "No cooking.", [
       part("yogurt", "protein"),
       carb("banana", 120),
-      oil(),
     ]),
     meal("snack-fruit", "snack", "Cottage cheese, apple, berries", "No cooking.", [
       part("cottage", "protein"),
@@ -171,6 +170,14 @@
       Breakfast and lunch: about 42 g protein and 110 g carbs.
       About 45% of the snack's calories and protein sit on dinner instead. */
   const DEFAULT_SHARES = {
+    breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
+    lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },
+    snack: { kcal: 235 / 2500, p: 26 / 180, f: 6 / 65, c: 17 / 315 },
+    dinner: { kcal: 815 / 2500, p: 70 / 180, f: 32 / 65, c: 76 / 315 },
+  }
+
+  /* Same split as DEFAULT_SHARES. Kept so a saved plan on this split is left alone. */
+  const LIGHT_SNACK_SHARES = {
     breakfast: { kcal: 660 / 2500, p: 42 / 180, f: 9 / 65, c: 110 / 315 },
     lunch: { kcal: 790 / 2500, p: 42 / 180, f: 18 / 65, c: 112 / 315 },
     snack: { kcal: 235 / 2500, p: 26 / 180, f: 6 / 65, c: 17 / 315 },
@@ -620,8 +627,25 @@
     return cache
   }
 
+  function withExtraOil(scaled, grams, prices) {
+    const items = scaled.items.map((item) => ({ food: item.food, amount: item.amount }))
+    const found = items.find((item) => item.food === "oil")
+    if (found) found.amount += grams
+    else items.push({ food: "oil", amount: grams })
+    return { meal: scaled.meal, items, actual: macrosOf(items), cost: costOf(items, prices), target: scaled.target }
+  }
+
+  /* Yogurt is nonfat, so the snack solver used to pour olive oil on it to hit the fat target.
+     That oil moves onto lunch on the days that snack is yogurt. Cottage cheese already has its own fat. */
+  function mealOnDay(state, cache, day, slot) {
+    const scaled = cache[day[slot]]
+    if (!scaled) return scaled
+    if (slot === "lunch" && day.snack === "snack-banana") return withExtraOil(scaled, 5, state.prices)
+    return scaled
+  }
+
   function dayMeals(state, cache, day) {
-    return SLOTS.map((slot) => cache[day[slot]]).filter(Boolean)
+    return SLOTS.map((slot) => mealOnDay(state, cache, day, slot)).filter(Boolean)
   }
 
   function sumMacros(list) {
@@ -709,7 +733,7 @@
 
   function presetShares(shares) {
     if (!shares) return true
-    return closeShares(shares, PREVIOUS_SHARES) || closeShares(shares, HEAVY_SNACK_SHARES)
+    return closeShares(shares, PREVIOUS_SHARES) || closeShares(shares, HEAVY_SNACK_SHARES) || closeShares(shares, LIGHT_SNACK_SHARES)
   }
 
   function packPriceOf(food, prices) {
@@ -875,6 +899,7 @@
     scalePlan,
     scaleMeal,
     dayMeals,
+    mealOnDay,
     sumMacros,
     sumCost,
     shopping,

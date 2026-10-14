@@ -825,7 +825,7 @@
     bindFoods(state.customFoods)
     const totals = collect(state, cache, weekIndexes)
     const shops = state.shops || {}
-    return Object.entries(totals)
+    const lines = Object.entries(totals)
       .filter(([, amount]) => amount > 0)
       .map(([id, amount]) => {
         const food = foodById(id)
@@ -845,7 +845,23 @@
         }
       })
       .filter(Boolean)
-      .sort((a, b) => a.name.localeCompare(b.name))
+    const seen = new Set(lines.map((line) => line.id))
+    ;(state.customFoods || []).forEach((food) => {
+      if (!food || seen.has(food.id) || !foodById(food.id)) return
+      const picked = shops[food.id] && String(shops[food.id]).trim() ? String(shops[food.id]).trim() : food.store
+      lines.push({
+        id: food.id,
+        name: food.name,
+        store: picked,
+        amount: 0,
+        piece: false,
+        packs: 0,
+        packLabel: food.packLabel,
+        packPrice: packPriceOf(food, state.prices),
+        cost: 0,
+      })
+    })
+    return lines.sort((a, b) => a.name.localeCompare(b.name))
   }
 
   function closeShares(a, b) {

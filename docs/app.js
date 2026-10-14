@@ -624,11 +624,17 @@
     }
     const foods = catalog()
     const picked = new Set(mealDraft.foods)
+    const customIds = new Set((state.customFoods || []).map((food) => food.id))
     const chips = Object.keys(foods)
-      .sort((a, b) => foods[a].name.localeCompare(foods[b].name))
+      .sort((a, b) => {
+        const group = (id) => (customIds.has(id) ? 0 : 1)
+        if (group(a) !== group(b)) return group(a) - group(b)
+        return foods[a].name.localeCompare(foods[b].name)
+      })
       .map((id) => {
         return (
           '<button type="button" class="food-chip' +
+          (customIds.has(id) ? " added" : "") +
           (picked.has(id) ? " on" : "") +
           '" data-food-toggle="' +
           id +
@@ -656,9 +662,10 @@
       '</div><p class="hint">Pick the foods. Grams are calculated for ' +
       P.SLOT_LABEL[slot].toLowerCase() +
       '. Up to 8 foods.</p>' +
+      '<div class="food-add-block">' +
       (yours ? '<div class="your-foods">Foods you added ' + yours + "</div>" : "") +
       foodForm() +
-      '<div class="action-row"><button type="button" class="solid" data-save-meal="1">' +
+      '</div><div class="action-row"><button type="button" class="solid" data-save-meal="1">' +
       (mealDraft.id ? "Save meal" : "Add meal") +
       '</button><button type="button" class="ghost" data-cancel-meal="1">Cancel</button></div></div>'
     )
@@ -688,17 +695,19 @@
     return (
       '<div class="new-food"><h4>New food</h4><label>Name<input data-new-name value="' +
       esc(d.name || "") +
-      '" placeholder="Sourdough" maxlength="60" autocomplete="off"></label><p class="hint">Per 100 g, from the label.</p><div class="macro-fields">' +
+      '" placeholder="Sourdough" maxlength="60" autocomplete="off"></label><p class="hint">Per 100 g, from the label. Blank protein, fat, and carbs count as zero.</p><div class="macro-fields">' +
       field("kcal", "Calories", d.kcal, "250") +
       field("p", "Protein, g", d.p, "9") +
       field("f", "Fat, g", d.f, "1.5") +
       field("c", "Carbs, g", d.c, "49") +
-      '</div><p class="hint">The pack is what the shop list buys. Once a meal on the plan uses this food, it shows up there.</p><div class="macro-fields">' +
+      '</div><p class="hint">Pack size can stay blank. That means one pound. The food shows up here and on the shop list right away.</p><div class="macro-fields">' +
       field("price", "Pack price, $", d.price, "3.49") +
-      field("grams", "Pack size, g", d.grams, "680") +
-      field("label", "Pack", d.label, "loaf", "text") +
+      field("grams", "Pack size, g", d.grams, "454") +
+      field("label", "Pack", d.label, "lb", "text") +
       field("store", "Shop", d.store, "Trader Joe's", "text") +
-      '</div><div class="action-row"><button type="button" class="solid" data-save-food="1">Add food</button><button type="button" class="ghost" data-cancel-food="1">Cancel</button></div></div>'
+      "</div>" +
+      (d.error ? '<p class="form-error">' + esc(d.error) + "</p>" : "") +
+      '<div class="action-row"><button type="button" class="solid" data-save-food="1">Add food</button><button type="button" class="ghost" data-cancel-food="1">Cancel</button></div></div>'
     )
   }
 
@@ -724,46 +733,63 @@
     return trimmed
   }
 
+  function parseNum(value) {
+    const text = String(value || "").trim().replace(/,/g, ".").replace(/[^0-9.]/g, "")
+    if (!text) return null
+    const n = Number(text)
+    return Number.isFinite(n) ? n : null
+  }
+
+  function foodError(message) {
+    if (!foodDraft) return
+    foodDraft.error = message
+    render()
+    const input = document.querySelector("[data-new-name]")
+    if (input) input.focus()
+  }
+
   function saveCustomFood() {
     if (!foodDraft) return
     readFoodDraft()
     const name = String(foodDraft.name || "").trim().slice(0, 60)
     if (!name) {
-      flash("Name the food.")
+      foodError("Name the food.")
       return
     }
     const known = catalog()
     if (Object.keys(known).some((id) => known[id].name.toLowerCase() === name.toLowerCase())) {
-      flash("That food is already in the list.")
+      foodError("That food is already in the list.")
       return
     }
-    const typed = [foodDraft.kcal, foodDraft.p, foodDraft.f, foodDraft.c]
-    if (typed.some((value) => String(value || "").trim() !== "" && !Number.isFinite(Number(value)))) {
-      flash("Use numbers for the label.")
+    const numbers = ["kcal", "p", "f", "c", "price", "grams"].map((key) => [key, String(foodDraft[key] || "").trim()])
+    if (numbers.some(([, value]) => value && parseNum(value) == null)) {
+      foodError("Use numbers for the label and the pack.")
       return
     }
     const per100 = {
-      kcal: Number(foodDraft.kcal) || 0,
-      p: Number(foodDraft.p) || 0,
-      f: Number(foodDraft.f) || 0,
-      c: Number(foodDraft.c) || 0,
+      kcal: parseNum(foodDraft.kcal) || 0,
+      p: parseNum(foodDraft.p) || 0,
+      f: parseNum(foodDraft.f) || 0,
+      c: parseNum(foodDraft.c) || 0,
       fiber: 0,
     }
     if (per100.kcal + per100.p + per100.f + per100.c <= 0) {
-      flash("Enter the calories, protein, fat, and carbs per 100 g.")
+      foodError("Enter the calories per 100 g. Protein, fat, and carbs can stay blank.")
       return
     }
-    const packGrams = Number(foodDraft.grams)
-    if (!Number.isFinite(packGrams) || packGrams <= 0) {
-      flash("Enter the pack size in grams.")
+    const typedGrams = parseNum(foodDraft.grams)
+    const packGrams = typedGrams == null ? 454 : typedGrams
+    if (packGrams <= 0) {
+      foodError("Enter the pack size in grams, or leave it blank for one pound.")
       return
     }
-    const packPrice = String(foodDraft.price || "").trim() === "" ? 0 : Number(foodDraft.price)
-    if (!Number.isFinite(packPrice) || packPrice < 0) {
-      flash("Enter the pack price.")
+    const typedPrice = parseNum(foodDraft.price)
+    const packPrice = typedPrice == null ? 0 : typedPrice
+    if (packPrice < 0) {
+      foodError("Enter the pack price, or leave it blank.")
       return
     }
-    const packLabel = String(foodDraft.label || "").trim().slice(0, 24) || "pack"
+    const packLabel = String(foodDraft.label || "").trim().slice(0, 24) || (typedGrams == null ? "lb" : "pack")
     const store = rememberShop(String(foodDraft.store || "").trim() || "Trader Joe's")
     const taken = new Set(Object.keys(P.FOODS).concat((state.customFoods || []).map((food) => food.id)))
     let id = "f" + Math.random().toString(36).slice(2, 10)
@@ -905,10 +931,8 @@
         return (
           '<div class="line"><div><strong>' +
           esc(line.name) +
-          '</strong><div class="buy">Use ' +
-          esc(usedLabel(line)) +
-          " · " +
-          esc(buyLabel(line)) +
+          '</strong><div class="buy">' +
+          esc(line.amount ? "Use " + usedLabel(line) + " · " + buyLabel(line) : "Not in this plan yet") +
           '</div></div><div class="price-col"><label class="price">Pack price<input inputmode="decimal" data-price="' +
           line.id +
           '" value="' +
@@ -925,7 +949,7 @@
             .map((name) => '<option' + (name === store ? " selected" : "") + ">" + esc(name) + "</option>")
             .join("") +
           '<option value="__add__">Add shop…</option></select></div><div class="money">' +
-          P.money(buyCost(line)) +
+          (line.packs ? P.money(buyCost(line)) : "—") +
           '<div class="buy">per ' +
           esc(food.packLabel) +
           "</div></div></div>"
@@ -1117,7 +1141,7 @@
       return
     }
     if (event.target.closest("[data-new-food]")) {
-      foodDraft = { name: "", kcal: "", p: "", f: "", c: "", price: "", grams: "", label: "", store: "" }
+      foodDraft = { name: "", kcal: "", p: "", f: "", c: "", price: "", grams: "", label: "", store: "", error: "" }
       render()
       const input = document.querySelector("[data-new-name]")
       if (input) input.focus()

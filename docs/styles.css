@@ -288,8 +288,17 @@ h1, h2, h3, h4, p { margin: 0; }
   padding: 0.35rem 0.8rem;
 }
 .food-chip.on { border-color: var(--tomato); background: #fff7f4; }
-.add-food { margin-top: 0.55rem; }
-.your-foods { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin: 0.35rem 0 0.7rem; color: var(--soft); font-size: 0.92rem; }
+.food-add-block {
+  margin-top: 1.2rem;
+  padding: 1.15rem 0 1.4rem;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.meal-draft > .action-row { margin-top: 1.35rem; }
+.add-food { margin-top: 0.15rem; }
+.form-error { color: var(--tomato); margin: 0.15rem 0 0.7rem; }
+.food-chip.added { background: #f6f1e8; }
+.your-foods { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin: 0 0 0.85rem; color: var(--soft); font-size: 0.92rem; }
 .your-food { display: inline-flex; align-items: center; gap: 0.3rem; }
 .your-food .ghost { min-height: 36px; padding: 0.15rem 0.6rem; }
 .new-food { margin-top: 0.85rem; }

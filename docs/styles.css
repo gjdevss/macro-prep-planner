@@ -257,6 +257,36 @@ h1, h2, h3, h4, p { margin: 0; }
   padding: 0.85rem 0.95rem;
 }
 .meal-card h4 { font-size: 1.05rem; font-weight: 550; }
+.add-meal { margin-top: 0.7rem; }
+.meal-remove { margin-top: 0.55rem; }
+.meal-draft {
+  margin-top: 0.7rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem;
+}
+.meal-draft label { display: block; font-size: 0.85rem; color: var(--soft); }
+.meal-draft input {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 0.35rem 0.55rem;
+}
+.find-food { margin-top: 0.7rem; }
+.food-picks { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.7rem 0 0.4rem; }
+.food-chip {
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 0.35rem 0.8rem;
+}
+.food-chip.on { border-color: var(--tomato); background: #fff7f4; }
+.food-chip[hidden] { display: none; }
 .meal-card .macros { display: block; margin-top: 0.15rem; }
 .macros { color: var(--soft); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
 

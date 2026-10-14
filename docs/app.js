@@ -19,6 +19,7 @@
   let dayIndex = 0
   let shopScope = "month"
   let picker = null
+  let mealDraft = null
   let notice = ""
   let cacheKey = ""
   let scaledCache = null
@@ -248,7 +249,7 @@
   }
 
   function getCache() {
-    const key = JSON.stringify({ t: state.targets, s: state.shares, p: state.prices })
+    const key = JSON.stringify({ t: state.targets, s: state.shares, p: state.prices, m: state.customMeals })
     if (key !== cacheKey) {
       cacheKey = key
       scaledCache = P.scalePlan(state)
@@ -306,7 +307,7 @@
   }
 
   function assign(day, slot, mealId) {
-    const meal = P.mealById(mealId)
+    const meal = P.mealById(mealId, state.customMeals)
     if (!meal || meal.slot !== slot) return
     state.weeks[state.activeWeek][day][slot] = mealId
     picker = null
@@ -497,7 +498,7 @@
     const slot = picker.slot
     const pickedDay = state.weeks[state.activeWeek][picker.day]
     const current = pickedDay[slot]
-    const options = P.mealsFor(slot)
+    const options = P.mealsFor(slot, state.customMeals)
       .map((meal) => {
         const scaled = P.mealOnDay(state, cache, Object.assign({}, pickedDay, { [slot]: meal.id }), slot)
         const bits = scaled.items.map((item) => P.formatAmount(item) + " " + P.FOODS[item.food].name).join(" · ")
@@ -606,9 +607,63 @@
     return rangeBuy(cache, [0, 1, 2, 3])
   }
 
+  function mealForm(slot) {
+    if (!mealDraft || mealDraft.slot !== slot) {
+      return '<button type="button" class="ghost add-meal" data-add-meal="' + slot + '">Add a ' + P.SLOT_LABEL[slot].toLowerCase() + "</button>"
+    }
+    const picked = new Set(mealDraft.foods)
+    const chips = Object.keys(P.FOODS)
+      .sort((a, b) => P.FOODS[a].name.localeCompare(P.FOODS[b].name))
+      .map((id) => {
+        return (
+          '<button type="button" class="food-chip' +
+          (picked.has(id) ? " on" : "") +
+          '" data-food-toggle="' +
+          id +
+          '">' +
+          esc(P.FOODS[id].name) +
+          "</button>"
+        )
+      })
+      .join("")
+    return (
+      '<div class="meal-draft"><label>Name<input data-meal-name value="' +
+      esc(mealDraft.name) +
+      '" placeholder="Steak and potato" maxlength="60" autocomplete="off"></label><label class="find-food">Foods<input data-food-filter placeholder="Find a food" autocomplete="off"></label><div class="food-picks">' +
+      chips +
+      '</div><p class="hint">Pick the foods. Grams are calculated for ' +
+      P.SLOT_LABEL[slot].toLowerCase() +
+      '. Up to 8 foods.</p><div class="action-row"><button type="button" class="solid" data-save-meal="1">Add meal</button><button type="button" class="ghost" data-cancel-meal="1">Cancel</button></div></div>'
+    )
+  }
+
+  function readDraftName() {
+    const input = document.querySelector("[data-meal-name]")
+    if (input && mealDraft) mealDraft.name = input.value
+  }
+
+  function saveDraftMeal() {
+    if (!mealDraft) return
+    readDraftName()
+    const foods = mealDraft.foods.slice(0, 8)
+    if (!foods.length) {
+      flash("Pick at least one food.")
+      return
+    }
+    let name = mealDraft.name.trim()
+    if (!name) name = foods.map((id) => P.FOODS[id].name).join(", ")
+    name = name.slice(0, 60)
+    const taken = new Set((state.customMeals || []).map((meal) => meal.id).concat(P.MEALS.map((meal) => meal.id)))
+    let id = "c" + Math.random().toString(36).slice(2, 10)
+    while (taken.has(id)) id = "c" + Math.random().toString(36).slice(2, 10)
+    state.customMeals = (state.customMeals || []).concat([{ id, slot: mealDraft.slot, name, foods }])
+    mealDraft = null
+    commit()
+  }
+
   function renderMeals(cache) {
     const groups = P.SLOTS.map((slot) => {
-      const cards = P.mealsFor(slot)
+      const cards = P.mealsFor(slot, state.customMeals)
         .map((meal) => {
           const scaled = cache[meal.id]
           const items = scaled.items
@@ -625,6 +680,9 @@
               )
             })
             .join("")
+          const remove = Array.isArray(meal.foods)
+            ? '<button type="button" class="ghost meal-remove" data-remove-meal="' + esc(meal.id) + '">Remove</button>'
+            : ""
           return (
             '<article class="meal-card"><h4>' +
             esc(meal.name) +
@@ -634,11 +692,21 @@
             P.money(scaled.cost) +
             '</p><ul class="ingredients">' +
             items +
-            "</ul></article>"
+            "</ul>" +
+            remove +
+            "</article>"
           )
         })
         .join("")
-      return '<section class="meal-group"><h3>' + P.SLOT_LABEL[slot] + "</h3><div class=\"meal-grid\">" + cards + "</div></section>"
+      return (
+        '<section class="meal-group"><h3>' +
+        P.SLOT_LABEL[slot] +
+        '</h3><div class="meal-grid">' +
+        cards +
+        "</div>" +
+        mealForm(slot) +
+        "</section>"
+      )
     }).join("")
     return (
       '<section class="panel"><div class="panel-head"><div><h2>Meals</h2><p class="muted">Portion sizes move when the targets move.</p></div></div>' +
@@ -805,7 +873,46 @@
     if (viewBtn) {
       view = viewBtn.dataset.view
       picker = null
+      if (view !== "meals") mealDraft = null
       render()
+      return
+    }
+    const addMeal = event.target.closest("[data-add-meal]")
+    if (addMeal) {
+      mealDraft = { slot: addMeal.dataset.addMeal, name: "", foods: [] }
+      render()
+      const nameInput = document.querySelector("[data-meal-name]")
+      if (nameInput) nameInput.focus()
+      return
+    }
+    const foodToggle = event.target.closest("[data-food-toggle]")
+    if (foodToggle && mealDraft) {
+      readDraftName()
+      const id = foodToggle.dataset.foodToggle
+      const has = mealDraft.foods.indexOf(id) >= 0
+      if (has) mealDraft.foods = mealDraft.foods.filter((foodId) => foodId !== id)
+      else if (mealDraft.foods.length < 8) mealDraft.foods = mealDraft.foods.concat(id)
+      else flash("Up to 8 foods.")
+      render()
+      return
+    }
+    if (event.target.closest("[data-save-meal]")) {
+      saveDraftMeal()
+      return
+    }
+    if (event.target.closest("[data-cancel-meal]")) {
+      mealDraft = null
+      render()
+      return
+    }
+    const removeMeal = event.target.closest("[data-remove-meal]")
+    if (removeMeal) {
+      const id = removeMeal.dataset.removeMeal
+      const meal = P.mealById(id, state.customMeals)
+      if (meal && window.confirm("Remove " + meal.name + "?")) {
+        state.customMeals = (state.customMeals || []).filter((item) => item.id !== id)
+        commit()
+      }
       return
     }
     if (event.target.classList.contains("sheet-back") || event.target.closest("button[data-close]")) {
@@ -890,6 +997,15 @@
     Object.keys(state.shops || {}).forEach((id) => add(state.shops[id]))
     return names
   }
+
+  app.addEventListener("input", (event) => {
+    const filter = event.target.closest("[data-food-filter]")
+    if (!filter) return
+    const query = filter.value.trim().toLowerCase()
+    document.querySelectorAll("[data-food-toggle]").forEach((button) => {
+      button.hidden = query.length > 0 && button.textContent.toLowerCase().indexOf(query) < 0
+    })
+  })
 
   app.addEventListener("change", (event) => {
     const target = event.target.closest("[data-target]")

@@ -382,8 +382,67 @@
     return (pricePer100(food, prices) / 100) * item.amount
   }
 
-  function scaleMeal(mealId, target, prices) {
-    const meal = MEALS.find((m) => m.id === mealId)
+  function listedBounds(food) {
+    if (food.piece) return { step: 1, min: 1, max: food.id === "egg" ? 6 : 8 }
+    if (food.id === "oil") return { step: 5, min: 5, max: 80 }
+    return { step: 10, min: 10, max: 1200 }
+  }
+
+  function listedScore(foods, amounts, target) {
+    return errorScore(
+      macrosOf(foods.map((food, i) => ({ food: food.id, amount: amounts[i] }))),
+      target,
+      false,
+    )
+  }
+
+  /* A meal you add is a list of foods. Each food stays in the meal.
+     Grams are the best fit to that section's target. Nothing is typed in. */
+  function scaleListed(meal, target, prices) {
+    const foods = meal.foods.map((id) => FOODS[id]).filter(Boolean)
+    const guess = nnls(foods.map(perUnit), target)
+    let amounts = foods.map((food, i) => {
+      const bound = listedBounds(food)
+      const rounded = roundStep(guess[i] || 0, bound.step)
+      return Math.min(bound.max, Math.max(bound.min, rounded))
+    })
+    for (let pass = 0; pass < 80; pass++) {
+      let best = amounts
+      let bestScore = listedScore(foods, amounts, target)
+      let changed = false
+      foods.forEach((food, i) => {
+        const bound = listedBounds(food)
+        ;[-bound.step, bound.step].forEach((delta) => {
+          const nextAmt = amounts[i] + delta
+          if (nextAmt < bound.min || nextAmt > bound.max) return
+          const trial = amounts.slice()
+          trial[i] = nextAmt
+          const score = listedScore(foods, trial, target)
+          if (score < bestScore - 1e-9) {
+            best = trial
+            bestScore = score
+            changed = true
+          }
+        })
+      })
+      if (!changed) break
+      amounts = best
+    }
+    const items = foods.map((food, i) => ({ food: food.id, amount: amounts[i] }))
+    const actual = macrosOf(items)
+    return {
+      items,
+      actual,
+      err: errorScore(actual, target, false),
+      meal,
+      cost: costOf(items, prices),
+      target,
+    }
+  }
+
+  function scaleMeal(mealId, target, prices, customMeals) {
+    const meal = mealById(mealId, customMeals)
+    if (Array.isArray(meal.foods)) return scaleListed(meal, target, prices)
     const countPart = meal.parts.find((p) => p.mode === "count")
     const fixedParts = meal.parts.filter((p) => p.mode === "fixed")
     const microParts = meal.parts.filter((p) => p.mode === "micro")
@@ -605,24 +664,26 @@
       prices: {},
       shops: {},
       shopList: [],
+      customMeals: [],
     }
   }
 
-  function mealById(id) {
-    return MEALS.find((m) => m.id === id)
+  function mealById(id, customMeals) {
+    return MEALS.find((m) => m.id === id) || (customMeals || []).find((m) => m.id === id) || null
   }
 
-  function mealsFor(slot) {
-    return MEALS.filter((m) => m.slot === slot)
+  function mealsFor(slot, customMeals) {
+    return MEALS.filter((m) => m.slot === slot).concat((customMeals || []).filter((m) => m.slot === slot))
   }
 
   function scalePlan(state) {
     const shares = normalizeShares(state.shares)
+    const custom = state.customMeals || []
     const cache = {}
     SLOTS.forEach((slot) => {
       const target = slotTarget(state.targets, shares, slot)
-      mealsFor(slot).forEach((m) => {
-        cache[m.id] = scaleMeal(m.id, target, state.prices)
+      mealsFor(slot, custom).forEach((m) => {
+        cache[m.id] = scaleMeal(m.id, target, state.prices, custom)
       })
     })
     return cache
@@ -820,8 +881,31 @@
       const n = item.amount
       return n + (n === 1 ? " egg" : " eggs")
     }
-    if (item.food === "sardines") return "1 can (120 g)"
+    if (item.food === "sardines" && item.amount === 120) return "1 can (120 g)"
     return item.amount + " g"
+  }
+
+  function cleanCustomMeals(list) {
+    const meals = []
+    const seen = new Set(MEALS.map((meal) => meal.id))
+    if (!Array.isArray(list)) return meals
+    list.forEach((meal) => {
+      if (!meal || typeof meal !== "object") return
+      const id = String(meal.id || "").trim().slice(0, 24)
+      if (!/^c[a-z0-9]+$/.test(id) || seen.has(id) || SLOTS.indexOf(meal.slot) < 0) return
+      const name = String(meal.name || "").trim().slice(0, 60)
+      const foods = []
+      const foodSeen = new Set()
+      ;(Array.isArray(meal.foods) ? meal.foods : []).forEach((foodId) => {
+        if (!FOODS[foodId] || foodSeen.has(foodId)) return
+        foodSeen.add(foodId)
+        foods.push(foodId)
+      })
+      if (!name || foods.length < 1) return
+      seen.add(id)
+      meals.push({ id, slot: meal.slot, name, foods: foods.slice(0, 8) })
+    })
+    return meals.slice(0, 24)
   }
 
   function sanitize(state) {
@@ -834,6 +918,7 @@
       prices: state.prices && typeof state.prices === "object" ? state.prices : {},
       shops: cleanShops(state.shops),
       shopList: cleanShopList(state.shopList),
+      customMeals: cleanCustomMeals(state.customMeals),
     }
     KEYS.forEach((k) => {
       const n = Number(next.targets[k])
@@ -851,7 +936,7 @@
         const built = { breakfast: "breakfast", lunch: fb.lunch, snack: fb.snack, dinner: fb.dinner }
         SLOTS.forEach((slot) => {
           const id = day && day[slot]
-          const found = mealById(id)
+          const found = mealById(id, next.customMeals)
           if (found && found.slot === slot) built[slot] = id
         })
         return built

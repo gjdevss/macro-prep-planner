@@ -807,7 +807,39 @@
       customFoods: [],
       hiddenMeals: [],
       mealEdits: {},
+      locks: { kcal: false, p: false, f: false, c: false },
     }
+  }
+
+  /* A lock holds that number when calories change. Protein can stay at 180
+     while fat and carbs scale. More than one macro can be locked. */
+  function cleanLocks(locks) {
+    const next = { kcal: false, p: false, f: false, c: false }
+    if (!locks || typeof locks !== "object") return next
+    KEYS.forEach((key) => {
+      next[key] = !!locks[key]
+    })
+    return next
+  }
+
+  function applyTargetEdit(targets, locks, key, value) {
+    const next = {
+      kcal: targets.kcal,
+      p: targets.p,
+      f: targets.f,
+      c: targets.c,
+    }
+    const held = cleanLocks(locks)
+    if (!KEYS.includes(key) || !Number.isFinite(value) || value <= 0 || held[key]) return next
+    if (key === "kcal" && next.kcal > 0) {
+      const ratio = value / next.kcal
+      ;["p", "f", "c"].forEach((macro) => {
+        if (held[macro]) return
+        next[macro] = Math.max(1, Math.round(next[macro] * ratio))
+      })
+    }
+    next[key] = value
+    return next
   }
 
   function recipeFoods(meal) {
@@ -875,10 +907,182 @@
         cache[m.id] = scaleMeal(m.id, target, state.prices, state)
       })
     })
+    const fits = {}
+    cache.fittedDay = function (day) {
+      const key = SLOTS.map((slot) => (day && day[slot]) || "").join("|")
+      if (!fits[key]) fits[key] = fitDay(day, cache, state)
+      return fits[key]
+    }
     return cache
   }
 
+  /* Eggs stop at six and sardines are one can, so those dinners cannot reach
+     the protein share alone. A second side may come off the plate so chicken,
+     beef, yogurt, or cottage can take that protein without blowing the calories.
+     The berry shake stays on its own grams. */
+  function isSideFood(food) {
+    if (!food || food.piece) return false
+    if (food.id === "oil" || WHOLE_FRUIT[food.id] || food.id === "sardines") return false
+    const per = food.per100 || { kcal: 0, p: 0, f: 0, c: 0 }
+    if (per.kcal >= 500) return false
+    if (per.p >= 15 && per.p * 4 >= per.kcal * 0.35) return false
+    return true
+  }
+
+  function dayMiss(actual, target) {
+    const w = { kcal: 40, p: 55, f: 16, c: 12 }
+    let score = 0
+    KEYS.forEach((key) => {
+      const delta = (actual[key] - target[key]) / Math.max(target[key], 1)
+      score += w[key] * delta * delta
+    })
+    return score
+  }
+
+  function legalDayAmount(variable, amount) {
+    if (variable.kind === "extra") {
+      if (amount <= 0) return 0
+      if (amount < variable.floor) return amount < variable.floor * 0.5 ? 0 : variable.floor
+      return Math.min(variable.max, Math.max(variable.floor, roundStep(amount, variable.step)))
+    }
+    if (variable.kind === "oil") {
+      if (amount < 2.5) return 0
+      const stepped = roundStep(amount, 5)
+      return stepped < 5 ? 0 : Math.min(40, stepped)
+    }
+    if (variable.kind === "egg") return Math.min(variable.max, Math.max(variable.min, Math.round(amount)))
+    return Math.min(variable.max, Math.max(variable.min, roundStep(amount, variable.step)))
+  }
+
+  function fitDay(day, catalog, state) {
+    const bySlot = {}
+    SLOTS.forEach((slot) => {
+      const scaled = day && catalog[day[slot]]
+      if (!scaled) return
+      bySlot[slot] = {
+        items: scaled.items.map((item) => ({ food: item.food, amount: item.amount })),
+        meal: scaled.meal,
+        target: scaled.target,
+      }
+    })
+    const variables = []
+    SLOTS.forEach((slot) => {
+      const scaled = bySlot[slot]
+      if (!scaled || shakeRecipe(scaled.meal)) return
+      const sides = []
+      scaled.items.forEach((item, itemIndex) => {
+        const food = foodById(item.food)
+        if (!food || WHOLE_FRUIT[item.food] || item.food === "sardines") return
+        if (food.piece) {
+          variables.push({ slot, itemIndex, kind: "egg", step: 1, min: 1, max: food.id === "egg" ? 6 : 8 })
+          return
+        }
+        if (item.food === "oil") {
+          variables.push({ slot, itemIndex, kind: "oil", step: 5, min: 0, max: 40 })
+          return
+        }
+        const band = portionBand(food)
+        if (!isSideFood(food)) {
+          variables.push({ slot, itemIndex, kind: "core", step: band.step, min: band.min, max: band.max })
+          return
+        }
+        sides.push({ itemIndex, kcal: ((food.per100 && food.per100.kcal) || 0) * item.amount, band })
+      })
+      sides.sort((a, b) => b.kcal - a.kcal)
+      sides.forEach((side, index) => {
+        variables.push({
+          slot,
+          itemIndex: side.itemIndex,
+          kind: index === 0 ? "primary" : "extra",
+          step: side.band.step,
+          min: index === 0 ? side.band.min : 0,
+          max: side.band.max,
+          floor: side.band.min,
+        })
+      })
+    })
+
+    function amountsOf() {
+      return variables.map((variable) => bySlot[variable.slot].items[variable.itemIndex].amount)
+    }
+
+    function writeAmounts(amounts) {
+      variables.forEach((variable, index) => {
+        bySlot[variable.slot].items[variable.itemIndex].amount = amounts[index]
+      })
+    }
+
+    function plateItems() {
+      const items = []
+      SLOTS.forEach((slot) => {
+        if (!bySlot[slot]) return
+        bySlot[slot].items.forEach((item) => {
+          if (item.amount > 0) items.push(item)
+        })
+      })
+      return items
+    }
+
+    function score(amounts) {
+      writeAmounts(amounts)
+      let value = dayMiss(macrosOf(plateItems()), state.targets)
+      variables.forEach((variable, index) => {
+        value += Math.abs(amounts[index] - original[index]) * 1e-5
+        if (variable.kind === "extra" && amounts[index] === 0) value += 0.01
+      })
+      return value
+    }
+
+    const original = amountsOf()
+    let current = original.slice()
+    let currentScore = score(current)
+    for (let pass = 0; pass < 80; pass++) {
+      let best = current
+      let bestScore = currentScore
+      variables.forEach((variable, index) => {
+        const proposals = [current[index] - variable.step, current[index] + variable.step]
+        if (variable.kind === "extra") proposals.push(0, variable.floor)
+        if (variable.kind === "oil") proposals.push(0)
+        const seen = new Set()
+        proposals.forEach((proposal) => {
+          const nextAmount = legalDayAmount(variable, proposal)
+          if (seen.has(nextAmount) || nextAmount === current[index]) return
+          seen.add(nextAmount)
+          const trial = current.slice()
+          trial[index] = nextAmount
+          const trialScore = score(trial)
+          if (trialScore < bestScore - 1e-9) {
+            best = trial
+            bestScore = trialScore
+          }
+        })
+      })
+      if (best === current) break
+      current = best
+      currentScore = bestScore
+    }
+    writeAmounts(current)
+
+    const fitted = {}
+    SLOTS.forEach((slot) => {
+      const scaled = bySlot[slot]
+      if (!scaled) return
+      const items = scaled.items.filter((item) => item.amount > 0)
+      const actual = macrosOf(items)
+      fitted[slot] = {
+        items,
+        actual,
+        err: errorScore(actual, scaled.target, false, false),
+        meal: scaled.meal,
+        cost: costOf(items, state.prices),
+        target: scaled.target,
+      }
+    })
+    return fitted
+  }
+
   function mealOnDay(state, cache, day, slot) {
+    if (cache && cache.fittedDay) return cache.fittedDay(day)[slot]
     return cache[day[slot]]
   }
 
@@ -1248,6 +1452,7 @@
       customFoods,
       hiddenMeals: cleanHiddenMeals(state.hiddenMeals),
       mealEdits: cleanMealEdits(state.mealEdits),
+      locks: cleanLocks(state.locks),
     }
     KEYS.forEach((k) => {
       const n = Number(next.targets[k])
@@ -1328,5 +1533,6 @@
     normalizeShares,
     slotTarget,
     closeShares,
+    applyTargetEdit,
   }
 })

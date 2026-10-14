@@ -913,7 +913,7 @@
       )
     }).join("")
     return (
-      '<section class="panel"><div class="panel-head"><div><h2>Meals</h2><p class="muted">Portion sizes move when the targets move.</p></div></div>' +
+      '<section class="panel"><div class="panel-head"><div><h2>Meals</h2><p class="muted">Portion sizes move when the targets move. A day can leave a second side off so the targets still land.</p></div></div>' +
       '<div class="meal-groups">' +
       groups +
       "</div></section>"
@@ -1015,16 +1015,26 @@
       ["f", "Fat, g", t.f],
       ["c", "Carbs, g", t.c],
     ]
-      .map(
-        ([key, label, value]) =>
-          '<label>' +
+      .map(([key, label, value]) => {
+        const on = state.locks && state.locks[key]
+        return (
+          '<label><span class="target-name">' +
           label +
-          '<input inputmode="decimal" data-target="' +
+          '</span><input inputmode="decimal" data-target="' +
           key +
           '" value="' +
           value +
-          '"></label>',
-      )
+          '"><button type="button" class="lock' +
+          (on ? " on" : "") +
+          '" data-lock="' +
+          key +
+          '" aria-pressed="' +
+          (on ? "true" : "false") +
+          '">' +
+          (on ? "Locked" : "Lock") +
+          "</button></label>"
+        )
+      })
       .join("")
     const used = P.normalizeShares(state.shares)
     const rows = P.SLOTS.map((slot) => {
@@ -1056,7 +1066,7 @@
       )
     }).join(" · ")
     return (
-      '<section class="panel"><h2>Day targets</h2><p class="muted" style="margin:0.35rem 0 0.8rem">These four numbers resize every meal. They do not change which foods are in the meal. Changing calories scales protein, fat, and carbs with it. Change those three on their own when you want a different shape. 2,500 kcal, 180 g protein, 65 g fat, and 315 g carbs is the plate this was built around.</p>' +
+      '<section class="panel"><h2>Day targets</h2><p class="muted" style="margin:0.35rem 0 0.8rem">These four numbers resize every meal. They do not change which foods are in the meal. Changing calories scales protein, fat, and carbs with it. Lock a macro to hold it: protein can stay at 180 g while fat and carbs move, and more than one can be locked. Change an unlocked number on its own when you want a different shape. 2,500 kcal, 180 g protein, 65 g fat, and 315 g carbs is the plate this was built around.</p>' +
       '<div class="targets">' +
       fields +
       "</div>" +
@@ -1083,6 +1093,14 @@
         foodDraft = null
       }
       render()
+      return
+    }
+    const lock = event.target.closest("[data-lock]")
+    if (lock) {
+      const key = lock.dataset.lock
+      state.locks = Object.assign({ kcal: false, p: false, f: false, c: false }, state.locks)
+      state.locks[key] = !state.locks[key]
+      commit()
       return
     }
     const addMeal = event.target.closest("[data-add-meal]")
@@ -1282,13 +1300,7 @@
     if (target) {
       const n = Number(target.value)
       if (Number.isFinite(n) && n > 0) {
-        if (target.dataset.target === "kcal" && state.targets.kcal > 0) {
-          const ratio = n / state.targets.kcal
-          state.targets.p = Math.max(1, Math.round(state.targets.p * ratio))
-          state.targets.f = Math.max(1, Math.round(state.targets.f * ratio))
-          state.targets.c = Math.max(1, Math.round(state.targets.c * ratio))
-        }
-        state.targets[target.dataset.target] = n
+        state.targets = P.applyTargetEdit(state.targets, state.locks, target.dataset.target, n)
       }
       commit()
       return

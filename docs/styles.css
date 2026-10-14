@@ -392,6 +392,16 @@ h1, h2, h3, h4, p { margin: 0; }
 
 .targets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; }
 .targets label, .shares label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--soft); }
+.target-name { min-height: 1.2rem; }
+.lock {
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--soft);
+  font-size: 0.85rem;
+}
+.lock.on { background: var(--ink); color: #fffaf3; border-color: var(--ink); }
 .shares { width: 100%; border-collapse: collapse; margin-top: 0.6rem; }
 .shares th, .shares td { text-align: left; padding: 0.35rem 0.4rem 0.35rem 0; font-weight: 500; }
 .shares input { max-width: 6.5rem; }
